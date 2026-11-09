@@ -160,11 +160,29 @@ select { width: auto; cursor: pointer; }
 .shelf-meta { margin-top: .2rem; }
 .status-pill { font-size: .72rem; padding: .1rem .5rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
 .status-pill.s-reading { background: var(--accent-soft); color: var(--accent); }
-.stars { color: var(--border); letter-spacing: 1px; white-space: nowrap; }
-.stars .on { color: #e3a008; }
-.stars.editable .star { cursor: pointer; font-size: 1.4rem; }
-.stars.editable:hover .star { color: #e3a008; }
-.stars.editable .star:hover ~ .star { color: var(--border); }
+.stars { --star: #e3a008; letter-spacing: 1px; white-space: nowrap; display: inline-flex; align-items: center; }
+.star {
+  position: relative; display: inline-block; color: transparent;
+  background: linear-gradient(90deg, var(--star) var(--fill, 0%), var(--border) var(--fill, 0%));
+  -webkit-background-clip: text; background-clip: text;
+}
+.stars.editable .star { font-size: 1.6rem; line-height: 1; }
+.stars .hit { position: absolute; top: 0; bottom: 0; width: 50%; cursor: pointer; }
+.stars .hit.l { left: 0; } .stars .hit.r { right: 0; }
+.rating-num { margin-left: .5rem; font-weight: 600; font-size: .9rem; color: var(--muted); min-width: 3.5em; }
+
+/* detailed rating */
+.aspects { margin: .8rem 0 .2rem; border: 1px solid var(--border); border-radius: 12px; padding: .5rem .9rem; background: var(--surface); max-width: 520px; text-align: left; }
+.aspects summary { cursor: pointer; font-weight: 500; font-size: .9rem; padding: .2rem 0; }
+.aspect-rows { display: grid; gap: .6rem; margin: .7rem 0 .4rem; }
+.aspect-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; font-size: .9rem; }
+.dots { display: flex; gap: .3rem; flex-shrink: 0; }
+.dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); background: transparent; cursor: pointer; padding: 0; }
+.dot.on { background: var(--accent); border-color: var(--accent); }
+.dot:hover { border-color: var(--accent); }
+.aspect-suggest { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: .6rem; margin-top: .3rem; font-size: .9rem; }
+.bar-row.wide { grid-template-columns: 8rem 1fr 2rem; margin-bottom: 0; }
+.best { margin: 0 0 .5rem 8.6rem; }
 
 /* book page */
 .book-head { display: flex; gap: 2rem; align-items: flex-start; }
@@ -287,6 +305,8 @@ dialog::backdrop { background: rgba(20, 14, 8, .45); backdrop-filter: blur(2px);
   h1 { font-size: 1.6rem; }
   .book-head { flex-direction: column; align-items: center; text-align: center; gap: 1rem; }
   .book-head .row, .book-head .facts, .book-head .tags { justify-content: center; }
+  .aspects { margin-left: auto; margin-right: auto; }
+  .best { margin-left: 0; }
   .cover.lg { width: 150px; }
   .reading-row { flex-wrap: wrap; }
   .reading-row .col { flex-direction: row; width: 100%; }

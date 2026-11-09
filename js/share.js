@@ -1,5 +1,5 @@
 // Quote-card images and Markdown export.
-import { db, getBook, itemsForBook, KINDS, STATUSES } from './store.js';
+import { db, getBook, itemsForBook, KINDS, STATUSES, ASPECTS, fmtRating } from './store.js';
 
 const THEMES = [
   { bg: '#f6f0e4', fg: '#2b2420', accent: '#9a5b2e' },
@@ -76,7 +76,9 @@ export function bookMarkdown(book) {
   const lines = [`# ${book.title}`, ''];
   if (book.author) lines.push(`**Author:** ${book.author}  `);
   lines.push(`**Status:** ${STATUSES[book.status] || book.status}  `);
-  if (book.rating) lines.push(`**Rating:** ${'★'.repeat(book.rating)}${'☆'.repeat(5 - book.rating)}  `);
+  if (book.rating) lines.push(`**Rating:** ${'★'.repeat(Math.floor(book.rating))}${book.rating % 1 ? '½' : ''} (${fmtRating(book.rating)}/5)  `);
+  const asp = Object.entries(book.aspects || {}).filter(([, v]) => v > 0);
+  if (asp.length) lines.push(`**Breakdown:** ${asp.map(([k, v]) => `${ASPECTS[k]?.label || k} ${v}/5`).join(' · ')}  `);
   if (book.finishedAt) lines.push(`**Finished:** ${book.finishedAt}  `);
   if (book.tags?.length) lines.push(`**Tags:** ${book.tags.map((t) => '#' + t).join(' ')}  `);
   if (book.review) lines.push('', '## Review', '', book.review);

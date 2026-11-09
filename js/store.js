@@ -12,6 +12,22 @@ export const KINDS = {
   word: { label: 'Word', icon: 'Aa' },
 };
 
+// Optional detailed rating: each aspect is scored 1–5 and together they suggest an overall rating.
+export const ASPECTS = {
+  writing: { label: 'Writing', hint: 'prose, style, craft' },
+  substance: { label: 'Story & ideas', hint: 'plot or argument, originality' },
+  feeling: { label: 'Emotional pull', hint: 'how much it gripped or moved you' },
+  staying: { label: 'Staying power', hint: 'will you still think about it in a year?' },
+};
+
+export function suggestedRating(aspects) {
+  const vals = Object.values(aspects || {}).filter((v) => v > 0);
+  if (!vals.length) return 0;
+  return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 2) / 2; // nearest half star
+}
+
+export const fmtRating = (n) => (n % 1 ? n.toFixed(1) : String(n));
+
 export const STATUSES = {
   want: 'Want to read',
   reading: 'Reading',

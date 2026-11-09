@@ -9,7 +9,8 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 **Books**
 - Library with shelves: *Want to read · Reading · Finished · Paused · Did not finish*
 - Search Open Library to auto-fill the title, author, pages, year, ISBN and cover
-- Star ratings, tags, format (print / ebook / audiobook), start and finish dates
+- **Half-star ratings** (e.g. 3.5★), plus an optional **detailed rating**: score Writing, Story & ideas, Emotional pull and Staying power from 1 to 5, and get a suggested overall rating. Stats shows your averages for each.
+- Tags, format (print / ebook / audiobook), start and finish dates
 - **Reading log**: record the page you're on and the minutes you read. It tracks progress and marks the book finished when you reach the last page.
 - **Reviews** for each book, with writing prompts. When you finish a book, the app asks you to write a few lines while it's fresh.
 

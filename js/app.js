@@ -1,5 +1,5 @@
 import {
-  db, save, onChange, uid, today, addDays, KINDS, STATUSES,
+  db, save, onChange, uid, today, addDays, KINDS, STATUSES, ASPECTS, suggestedRating, fmtRating,
   getBook, upsertBook, deleteBook, logSession,
   getItem, itemsForBook, upsertItem, deleteItem, allTags,
   buildReviewQueue, reviewItem, reviewStreak, exportJSON, importJSON,
@@ -18,12 +18,55 @@ const fmtDate = (s) => {
   const d = new Date(s.length === 10 ? s + 'T12:00:00' : s);
   return isNaN(d) ? s : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// Star display with half-star support. Editable stars have two click zones per star (left half = .5, right half = full).
+const starFill = (n, i) => (n >= i ? 100 : n >= i - 0.5 ? 50 : 0);
 const stars = (n, bookId) => {
-  let h = `<span class="stars ${bookId ? 'editable' : ''}">`;
-  for (let i = 1; i <= 5; i++) h += `<span class="star ${i <= n ? 'on' : ''}" ${bookId ? `data-action="rate" data-id="${bookId}" data-value="${i}"` : ''}>★</span>`;
+  n = Number(n) || 0;
+  let h = `<span class="stars ${bookId ? 'editable' : ''}" data-rating="${n}" title="${n ? fmtRating(n) + ' out of 5' : 'Not rated'}">`;
+  for (let i = 1; i <= 5; i++) {
+    h += `<span class="star" style="--fill:${starFill(n, i)}%">★${bookId ? `<i class="hit l" data-action="rate" data-id="${bookId}" data-value="${i - 0.5}" title="${i - 0.5} stars"></i><i class="hit r" data-action="rate" data-id="${bookId}" data-value="${i}" title="${plural(i, 'star')}"></i>` : ''}</span>`;
+  }
+  if (bookId) h += `<span class="rating-num">${n ? fmtRating(n) : 'Rate it'}</span>`;
   return h + '</span>';
 };
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+function paintStars(container, n) {
+  $$('.star', container).forEach((st, idx) => st.style.setProperty('--fill', starFill(n, idx + 1) + '%'));
+  const num = $('.rating-num', container);
+  if (num) num.textContent = n ? fmtRating(n) : 'Rate it';
+}
+document.addEventListener('mouseover', (e) => {
+  const hit = e.target.closest('.stars.editable .hit');
+  if (hit) paintStars(hit.closest('.stars'), Number(hit.dataset.value));
+});
+document.addEventListener('mouseout', (e) => {
+  const box = e.target.closest('.stars.editable');
+  if (box && !box.contains(e.relatedTarget)) paintStars(box, Number(box.dataset.rating));
+});
+
+function aspectPanel(b) {
+  const a = b.aspects || {};
+  const any = Object.values(a).some((v) => v > 0);
+  const sug = suggestedRating(a);
+  return `
+    <details class="aspects" ${any ? 'open' : ''}>
+      <summary>Rate in detail <span class="muted small">— score a few aspects, get a suggested overall</span></summary>
+      <div class="aspect-rows">
+        ${Object.entries(ASPECTS).map(([k, asp]) => `
+          <div class="aspect-row">
+            <div><b>${asp.label}</b><div class="muted small">${asp.hint}</div></div>
+            <div class="dots" role="group" aria-label="${asp.label}">
+              ${[1, 2, 3, 4, 5].map((v) => `<button class="dot ${v <= (a[k] || 0) ? 'on' : ''}" data-action="aspect" data-id="${b.id}" data-aspect="${k}" data-value="${v}" title="${v}/5" aria-label="${asp.label} ${v} of 5"></button>`).join('')}
+            </div>
+          </div>`).join('')}
+      </div>
+      ${sug ? `<div class="aspect-suggest">
+        Suggested overall: <b>${fmtRating(sug)} ★</b>
+        ${sug !== b.rating ? `<button class="btn sm" data-action="use-suggested" data-id="${b.id}">Use ${fmtRating(sug)}</button>` : '<span class="muted small">✓ matches your rating</span>'}
+      </div>` : ''}
+    </details>`;
+}
+
 function hashHue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 function cover(book, size = '') {
@@ -298,6 +341,7 @@ function viewBook(id) {
           </select>
           ${stars(b.rating, b.id)}
         </div>
+        ${b.status === 'want' ? '' : aspectPanel(b)}
         <dl class="facts">
           ${b.pages ? `<div><dt>Pages</dt><dd>${b.pages}</dd></div>` : ''}
           <div><dt>Format</dt><dd class="cap">${esc(b.format || '—')}</dd></div>
@@ -463,6 +507,12 @@ function viewStats() {
   const topHighlighted = db.books.map((b) => [b, itemsForBook(b.id).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const kinds = {};
   for (const i of db.items) kinds[i.kind] = (kinds[i.kind] || 0) + 1;
+  const aspectStats = Object.entries(ASPECTS).map(([k, asp]) => {
+    const scored = db.books.filter((b) => b.aspects?.[k] > 0);
+    if (!scored.length) return null;
+    const best = scored.slice().sort((x, y) => y.aspects[k] - x.aspects[k] || (y.rating || 0) - (x.rating || 0))[0];
+    return { asp, avg: scored.reduce((t, b) => t + b.aspects[k], 0) / scored.length, best };
+  }).filter(Boolean);
 
   // pages per day for the last 26 weeks (from reading sessions)
   const perDay = {};
@@ -508,6 +558,11 @@ function viewStats() {
         <h2>Most highlighted</h2>
         ${topHighlighted.length ? `<ol class="rank">${topHighlighted.map(([b, n]) => `<li><a href="#/book/${b.id}">${esc(b.title)}</a> <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
       </section>
+      ${aspectStats.length ? `<section class="card">
+        <h2>Rating breakdown</h2>
+        ${aspectStats.map(({ asp, avg: av, best }) => `<div class="bar-row wide"><span>${asp.label}</span><div class="bar"><span style="width:${(av / 5) * 100}%"></span></div><b>${av.toFixed(1)}</b></div>
+          <div class="muted small best">Best: <a href="#/book/${best.id}">${esc(best.title)}</a></div>`).join('')}
+      </section>` : ''}
       <section class="card">
         <h2>What you save</h2>
         ${Object.keys(kinds).length ? `<ol class="rank plain">${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li>${KINDS[k]?.icon || ''} ${KINDS[k]?.label || k}s <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
@@ -792,7 +847,22 @@ document.addEventListener('click', async (e) => {
     case 'card-theme': showCard(getItem(id), Number(el.dataset.theme)); break;
     case 'rate': {
       const b = getBook(id); const v = Number(el.dataset.value);
-      b.rating = b.rating === v ? 0 : v; save();
+      b.rating = b.rating === v ? 0 : v; // clicking the same value again clears it
+      b.ratingFromAspects = false; // a manual rating stops auto-syncing from the breakdown
+      save();
+      break;
+    }
+    case 'aspect': {
+      const b = getBook(id); const k = el.dataset.aspect; const v = Number(el.dataset.value);
+      b.aspects = b.aspects || {};
+      b.aspects[k] = b.aspects[k] === v ? 0 : v;
+      // If you haven't set an overall rating yourself, keep it in sync with the breakdown.
+      if (!b.rating || b.ratingFromAspects) { b.rating = suggestedRating(b.aspects); b.ratingFromAspects = true; }
+      save();
+      break;
+    }
+    case 'use-suggested': {
+      const b = getBook(id); b.rating = suggestedRating(b.aspects); b.ratingFromAspects = true; save();
       break;
     }
     case 'save-review': {
