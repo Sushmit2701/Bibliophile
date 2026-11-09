@@ -2,10 +2,10 @@
 import { db, getBook, itemsForBook, KINDS, STATUSES, ASPECTS, fmtRating } from './store.js';
 
 const THEMES = [
-  { bg: '#f6f0e4', fg: '#2b2420', accent: '#9a5b2e' },
-  { bg: '#1f2a2e', fg: '#f2ede4', accent: '#e0b46c' },
-  { bg: '#e7ece4', fg: '#22302a', accent: '#4f7a5f' },
-  { bg: '#2a1f2d', fg: '#f4eaf1', accent: '#d48fb5' },
+  { bg: '#f6f1e7', fg: '#1d1a17', accent: '#6e1f24' },
+  { bg: '#101714', fg: '#ece4d4', accent: '#c6a15b' },
+  { bg: '#4a1518', fg: '#f3e6d3', accent: '#d8b46a' },
+  { bg: '#1b2433', fg: '#ece7dc', accent: '#c6a15b' },
 ];
 
 function wrap(ctx, text, maxWidth) {
@@ -35,7 +35,7 @@ export async function quoteCard(item, themeIndex = 0) {
 
   let size = 64, lines;
   for (; size >= 30; size -= 2) {
-    ctx.font = `${size}px Georgia, 'Times New Roman', serif`;
+    ctx.font = `${size}px 'Cormorant Garamond', 'Cormorant Garamond', Georgia, serif`;
     lines = wrap(ctx, item.text, W - pad * 2);
     if (lines.length * size * 1.4 < H - pad * 2 - 260) break;
   }
@@ -44,16 +44,16 @@ export async function quoteCard(item, themeIndex = 0) {
   let y = (H - blockH) / 2 - 40;
 
   ctx.fillStyle = t.accent;
-  ctx.font = `bold 180px Georgia, serif`;
+  ctx.font = `bold 180px 'Cormorant Garamond', Georgia, serif`;
   ctx.fillText('“', pad - 20, y - 10);
 
   ctx.fillStyle = t.fg;
-  ctx.font = `${size}px Georgia, 'Times New Roman', serif`;
+  ctx.font = `${size}px 'Cormorant Garamond', 'Cormorant Garamond', Georgia, serif`;
   for (const l of lines) { y += lh; ctx.fillText(l, pad, y); }
 
   ctx.fillStyle = t.accent;
   ctx.fillRect(pad, y + 60, 80, 4);
-  ctx.font = `italic 36px Georgia, serif`;
+  ctx.font = `italic 36px 'Cormorant Garamond', Georgia, serif`;
   ctx.fillStyle = t.fg;
   const attrLines = wrap(ctx, attribution, W - pad * 2);
   attrLines.slice(0, 2).forEach((l, i) => ctx.fillText(l, pad, y + 120 + i * 48));

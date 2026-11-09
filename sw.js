@@ -1,5 +1,5 @@
 // Offline support: cache the app shell, network-first so updates arrive when online.
-const CACHE = 'bibliophile-v1';
+const CACHE = 'bibliophile-v2';
 const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/importers.js', 'js/share.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

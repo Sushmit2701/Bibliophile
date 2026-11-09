@@ -69,8 +69,11 @@ function aspectPanel(b) {
 
 function hashHue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
+// Cloth-bound colours for books without a cover image: oxblood, bottle green, navy, plum, tobacco, slate, rust, ink.
+const CLOTH = ["#5a1a1f", "#1f3a2f", "#1d2a44", "#3f2440", "#5b3b1c", "#2c3b40", "#6b2a1a", "#22262e"];
 function cover(book, size = '') {
-  const fallback = `<div class="cover-fallback" style="--h:${hashHue(book.title || '?')}"><span>${esc(book.title)}</span><small>${esc(book.author)}</small></div>`;
+  const cloth = CLOTH[hashHue(book.title || "?") % CLOTH.length];
+  const fallback = `<div class="cover-fallback" style="--cloth:${cloth}"><span>${esc(book.title)}</span><small>${esc(book.author)}</small></div>`;
   if (!book.cover) return `<div class="cover ${size}">${fallback}</div>`;
   return `<div class="cover ${size}"><img src="${esc(book.cover)}" alt="" loading="lazy" onerror="this.remove()">${fallback}</div>`;
 }
@@ -120,7 +123,7 @@ const routes = {
 const ui = { // transient UI state that survives re-renders
   libStatus: 'all', libSort: 'recent', libQuery: '',
   nKind: 'all', nQuery: '', nTag: '', nFav: false, nBook: '',
-  bookKind: 'all', reviewQueue: null, reviewIdx: 0, revealed: false,
+  bookKind: 'all', reviewQueue: null, reviewIdx: 0, revealed: false, dailyOffset: 0,
 };
 
 function render() {
@@ -132,7 +135,8 @@ function render() {
   const sameRoute = main.dataset.route === location.hash;
   main.innerHTML = view(decodeURIComponent(param || ''));
   main.dataset.route = location.hash;
-  if (sameRoute) window.scrollTo(0, scroll); else window.scrollTo(0, 0);
+  if (sameRoute) window.scrollTo(0, scroll);
+  else { window.scrollTo(0, 0); main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter'); }
   const due = db.items.length > 0 && !db.reviewLog[today()];
   $$('.review-dot').forEach((d) => d.hidden = !due);
 }
@@ -149,71 +153,84 @@ function viewHome() {
   const streak = reviewStreak();
   const reviewedToday = db.reviewLog[today()] || 0;
   const pool = db.items.filter((i) => i.text && i.kind !== 'word');
-  const daily = pool.length ? pool[(hashHue(today()) * 7919) % pool.length] : null;
+  const daily = pool.length ? pool[(hashHue(today()) * 7919 + ui.dailyOffset) % pool.length] : null;
   const recent = db.items.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 4);
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
   if (!db.books.length && !db.items.length) {
     return `
-      <section class="hero">
-        <h1>Welcome to your reading commonplace book</h1>
-        <p class="muted">Keep the books you read, the lines that stopped you, what you thought of them — and resurface it all a few at a time so it actually sticks.</p>
-        <div class="row gap center">
-          <button class="btn primary" data-action="add-book">+ Add your first book</button>
-          <button class="btn" data-action="add-item">+ Save a quote</button>
-          <a class="btn ghost" href="#/settings">Import from Kindle / Readwise / Goodreads</a>
+      <section class="hero enter-up">
+        <div class="ornament">❦</div>
+        <h1>A commonplace book<br><em>for the books you love</em></h1>
+        <p class="lede">Keep the books you read, the lines that stopped you, and what you made of them — then let them return to you, a few at a time, so they stay.</p>
+        <div class="row gap center wrap">
+          <button class="btn primary" data-action="add-book">Add your first book</button>
+          <button class="btn" data-action="add-item">Save a passage</button>
         </div>
+        <p class="small muted hero-foot">Already highlighting elsewhere? <a href="#/settings">Import from Kindle, Readwise or Goodreads</a></p>
       </section>`;
   }
 
   return `
-    <header class="page-head">
-      <div>
-        <h1>${greet}${db.settings.name ? ', ' + esc(db.settings.name) : ''}</h1>
-        <p class="muted">${plural(db.books.length, 'book')} · ${plural(db.items.length, 'saved passage')}</p>
-      </div>
-      <div class="row gap">
-        <button class="btn" data-action="add-book">+ Book</button>
-        <button class="btn primary" data-action="add-item">+ Highlight</button>
-      </div>
+    <header class="masthead">
+      <div class="eyebrow">${esc(dateLine)}</div>
+      <h1>${greet}${db.settings.name ? `, <em>${esc(db.settings.name)}</em>` : ''}</h1>
+      <p class="muted">${plural(db.books.length, 'book')} on your shelves · ${plural(db.items.length, 'passage')} kept</p>
     </header>
 
-    <div class="grid-2">
-      <a class="card review-cta" href="#/review">
-        <div>
-          <div class="eyebrow">Daily review</div>
-          <h2>${reviewedToday ? 'Done for today ✓' : `Revisit ${plural(Math.min(db.settings.dailyReview, db.items.length), 'passage')}`}</h2>
-          <p class="muted">${streak ? `🔥 ${plural(streak, 'day')} streak` : 'Start a streak — it takes a minute.'}</p>
-        </div>
-        <span class="arrow">→</span>
+    ${daily ? featuredPassage(daily) : ''}
+
+    <div class="ledger">
+      <a class="ledger-cell" href="#/review">
+        <div class="eyebrow">Daily review</div>
+        <div class="figure">${reviewedToday ? 'Complete' : plural(Math.min(db.settings.dailyReview, db.items.length), 'passage')}</div>
+        <div class="muted small">${streak ? `${plural(streak, 'day')} unbroken` : 'Begin a streak today'} <span class="go">→</span></div>
       </a>
-      <div class="card">
-        <div class="eyebrow">${year} reading goal</div>
-        <h2>${finishedThisYear}${goal ? ` <span class="muted">/ ${goal}</span>` : ''} books</h2>
+      <div class="ledger-cell">
+        <div class="eyebrow">${year} reading</div>
+        <div class="figure">${finishedThisYear}${goal ? `<span class="of"> of ${goal}</span>` : ''}</div>
         ${goal ? `<div class="progress"><span style="width:${Math.min(100, (finishedThisYear / goal) * 100)}%"></span></div>
-        <p class="muted small">${finishedThisYear >= goal ? 'Goal reached 🎉' : `${goal - finishedThisYear} to go · ${goalPace(finishedThisYear, goal)}`}</p>` : ''}
+        <div class="muted small">${finishedThisYear >= goal ? 'Goal reached — bravo' : goalPace(finishedThisYear, goal)}</div>` : ''}
+      </div>
+      <div class="ledger-cell actions-cell">
+        <div class="eyebrow">Add to the collection</div>
+        <button class="btn primary" data-action="add-item">Save a passage</button>
+        <button class="btn" data-action="add-book">Add a book</button>
       </div>
     </div>
 
-    ${daily ? `
     <section class="section">
-      <div class="eyebrow">Passage of the day</div>
-      ${itemCard(daily, { big: true })}
-    </section>` : ''}
-
-    <section class="section">
-      <div class="section-head"><h2>Currently reading</h2><a href="#/library" class="small">Library →</a></div>
+      <div class="section-head"><h2>On the nightstand</h2><a href="#/library" class="more">The library →</a></div>
       ${reading.length ? `<div class="reading-list">${reading.map(readingRow).join('')}</div>`
-        : `<p class="muted">Nothing on the go. <a href="#/library" >Pick something from your shelf</a> or <a href="#" data-action="add-book">add a book</a>.</p>`}
+        : `<p class="muted">Nothing on the go. <a href="#/library">Choose something from your shelves</a> or <a href="#" data-action="add-book">add a book</a>.</p>`}
     </section>
 
     ${recent.length ? `
     <section class="section">
-      <div class="section-head"><h2>Recently saved</h2><a href="#/notes" class="small">All notes →</a></div>
-      <div class="items">${recent.map((i) => itemCard(i)).join('')}</div>
+      <div class="section-head"><h2>Lately kept</h2><a href="#/notes" class="more">The notebook →</a></div>
+      <div class="items masonry">${recent.map((i) => itemCard(i)).join('')}</div>
     </section>` : ''}
   `;
+}
+
+function featuredPassage(i) {
+  const book = getBook(i.bookId);
+  return `
+    <section class="featured enter-up">
+      <div class="eyebrow center">Passage of the day</div>
+      <blockquote class="featured-quote">${nl2br(i.text)}</blockquote>
+      <div class="featured-attr">
+        ${book ? `<a href="#/book/${book.id}"><em>${esc(book.title)}</em></a>${book.author ? ` · ${esc(book.author)}` : ''}` : esc(i.source || '')}
+      </div>
+      <div class="featured-actions">
+        <button class="link-btn" data-action="shuffle-daily">Another</button>
+        <button class="link-btn" data-action="fav" data-id="${i.id}">${i.favorite ? '♥ Favourite' : '♡ Favourite'}</button>
+        <button class="link-btn" data-action="card" data-id="${i.id}">Share</button>
+      </div>
+    </section>`;
 }
 
 function goalPace(done, goal) {
@@ -229,10 +246,10 @@ function readingRow(b) {
   const pct = b.pages ? Math.min(100, Math.round((b.currentPage / b.pages) * 100)) : 0;
   return `
     <div class="reading-row">
-      <a href="#/book/${b.id}">${cover(b, 'sm')}</a>
+      <a href="#/book/${b.id}">${cover(b, 'md')}</a>
       <div class="grow">
         <a href="#/book/${b.id}" class="title">${esc(b.title)}</a>
-        <div class="muted small">${esc(b.author)}</div>
+        <div class="byline">${esc(b.author)}</div>
         ${b.pages ? `<div class="progress"><span style="width:${pct}%"></span></div>
           <div class="muted small">p. ${b.currentPage || 0} of ${b.pages} · ${pct}%</div>` : `<div class="muted small">${b.currentPage ? 'p. ' + b.currentPage : ''}</div>`}
       </div>
@@ -256,7 +273,7 @@ function itemCard(i, opts = {}) {
   return `
     <article class="item kind-${i.kind}" data-id="${i.id}">
       <div class="item-top">
-        <span class="kind-badge" title="${kind.label}">${kind.icon} ${kind.label}</span>
+        <span class="kind-badge" title="${kind.label}">${kind.label}</span>
         ${meta ? `<span class="muted small">${meta}</span>` : ''}
       </div>
       ${body}
@@ -451,9 +468,9 @@ function viewReview() {
   if (ui.reviewIdx >= queue.length) {
     return `
       <div class="review-done">
-        <div class="big-emoji">📚</div>
+        <div class="ornament">❦</div>
         <h1>That's today's review</h1>
-        <p class="muted">${streak ? `🔥 ${plural(streak, 'day')} in a row.` : ''} Come back tomorrow for more.</p>
+        <p class="muted">${streak ? `${plural(streak, 'day')} unbroken. ` : ''}More will be waiting tomorrow.</p>
         <div class="row gap center">
           <button class="btn" data-action="review-more">Review a few more</button>
           <a class="btn primary" href="#/">Home</a>
@@ -466,7 +483,7 @@ function viewReview() {
   return `
     <header class="page-head">
       <h1>Daily review</h1>
-      <span class="muted">${ui.reviewIdx + 1} / ${queue.length}${streak ? ` · 🔥 ${streak}` : ''}</span>
+      <span class="muted">${ui.reviewIdx + 1} / ${queue.length}${streak ? ` · ${plural(streak, 'day')} streak` : ''}</span>
     </header>
     <div class="progress thin"><span style="width:${(ui.reviewIdx / queue.length) * 100}%"></span></div>
     <div class="review-stage">
@@ -584,7 +601,7 @@ function viewSettings() {
         <label>Yearly reading goal <input name="yearlyGoal" type="number" min="0" value="${s.yearlyGoal}"></label>
         <label>Passages per daily review <input name="dailyReview" type="number" min="1" max="50" value="${s.dailyReview}"></label>
         <label>Theme
-          <select name="theme">${['auto', 'light', 'dark'].map((t) => `<option ${s.theme === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <select name="theme">${Object.entries({ auto: 'Follow device', light: 'Ivory (light)', dark: 'Library at night (dark)' }).map(([k, v]) => `<option value="${k}" ${s.theme === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
         <button class="btn primary">Save</button>
       </form>
@@ -896,6 +913,7 @@ document.addEventListener('click', async (e) => {
       ui.nTag = ui.nTag === el.dataset.tag ? '' : el.dataset.tag;
       if (!location.hash.startsWith('#/notes')) location.hash = '#/notes'; else render();
       break;
+    case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
     case 'review':
       reviewItem(ui.reviewQueue[ui.reviewIdx], el.dataset.value);
@@ -920,7 +938,7 @@ document.addEventListener('change', async (e) => {
     if (el.value === 'finished') {
       if (b.pages) b.currentPage = b.pages;
       save();
-      toast('Finished! 🎉 Write a few lines of review while it\'s fresh.');
+      toast('Finished. Write a few lines while it\'s fresh.');
       setTimeout(() => $('#review-text')?.focus(), 50);
     }
     return;
@@ -989,7 +1007,7 @@ document.addEventListener('submit', (e) => {
     logSession(fd.id, { date: fd.date, toPage: Number(fd.toPage) || 0, minutes: Number(fd.minutes) || 0 });
     closeModal();
     const b = getBook(fd.id);
-    toast(b.status === 'finished' ? 'Finished! 🎉 Add your review below.' : 'Progress logged');
+    toast(b.status === 'finished' ? 'Finished. Add your review below.' : 'Progress logged');
   } else if (type === 'settings') {
     Object.assign(db.settings, {
       name: fd.name.trim(), yearlyGoal: Number(fd.yearlyGoal) || 0,
