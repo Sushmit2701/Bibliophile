@@ -27,6 +27,18 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Vocabulary words show as flashcards, so you see the word before its definition
 - Tracks a daily streak and shows a "passage of the day" on the home screen
 
+**Reading timer**
+- Tap **Start reading** on a book. A full-screen reading room shows the clock, and a small bar follows you around the app.
+- The timer is based on timestamps, so it keeps counting if you lock your phone or close the app. **Finish & log** fills in the minutes and asks which page you reached.
+
+**Voice, AI and sharing**
+- **Dictate** reviews, passages and notes using your browser's built-in speech recognition. It's free and needs no key.
+- **✦ Tidy** turns a rambling voice note into a clean review and shows it next to your original before replacing anything. Without AI it does a basic clean-up (removes filler words and fixes capitals).
+- **Create a post** turns a book's saved quotes, review and rating into an Instagram/Threads **caption** or a timed **reel script** (on-screen text, voiceover, music mood, hashtags). The templates are free and work offline; *Write with AI* makes richer drafts.
+- **Share my year** (Stats page) makes a 1080×1920 story image: books, pages, hours, covers, favourite read and line of the year. It comes in three styles.
+
+**Optional AI (free):** create a Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it in **Settings → AI assistant**. The key stays in your browser and is never included in backups. Text is sent to Google only when you press an AI button, and on the free tier Google may use it to improve its products. If a model is retired, the app switches to a current one automatically.
+
 **Stats**
 - Yearly reading goal, and whether you're ahead of or behind pace
 - Activity heatmap, books per year, pages read, average rating, most-read authors and most-highlighted books
@@ -37,7 +49,9 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Duplicates are skipped, so you can re-import an updated file safely
 - Back up and restore as JSON, or export everything (or a single book) as **Markdown**, which works well with Obsidian or Notion
 
-**Keyboard shortcuts:** `n` new highlight · `b` new book · `/` search · `r` review · `1`–`3` answer during review
+**Keyboard shortcuts:** `n` new highlight · `b` new book · `/` search · `r` review · `t` timer · `1`–`3` answer during review
+
+**Home-screen shortcuts:** once installed, long-press the app icon (Android, and desktop Chrome/Edge) for *Start reading timer*, *Save a passage* and *Daily review*.
 
 ## Running it
 
@@ -66,5 +80,7 @@ js/store.js           data model, persistence, spaced-repetition review
 js/app.js             views, forms, routing, events
 js/importers.js       Kindle / Readwise / Goodreads importers
 js/share.js           quote-card images and Markdown export
+js/yearcard.js        "my year in books" story image
+js/ai.js              Gemini calls, review tidying, caption / reel templates
 sw.js, manifest.webmanifest, icons/   offline support and installable app
 ```

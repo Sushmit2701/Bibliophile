@@ -210,7 +210,9 @@ export function reviewStreak() {
 
 // ---------- Backup ----------
 export function exportJSON() {
-  return JSON.stringify(db, null, 2);
+  // Your AI key stays on this device — it's never written into backups.
+  const { geminiKey, ...settings } = db.settings;
+  return JSON.stringify({ ...db, settings, timer: undefined }, null, 2);
 }
 
 export function importJSON(text, mode = 'merge') {
@@ -219,7 +221,7 @@ export function importJSON(text, mode = 'merge') {
   if (mode === 'replace') {
     db.books = data.books;
     db.items = data.items;
-    db.settings = { ...db.settings, ...(data.settings || {}) };
+    db.settings = { ...db.settings, ...(data.settings || {}), geminiKey: db.settings.geminiKey };
     db.reviewLog = data.reviewLog || {};
   } else {
     const bIds = new Set(db.books.map((b) => b.id));

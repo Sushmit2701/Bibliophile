@@ -6,6 +6,8 @@ import {
 } from './store.js';
 import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
+import { hasAI, testKey, tidyLocally, tidyReview, captionTemplate, reelTemplate, aiCaption, aiReel, DEFAULT_MODEL } from './ai.js';
+import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -118,6 +120,7 @@ const routes = {
   notes: viewNotes,
   review: viewReview,
   stats: viewStats,
+  timer: viewTimer,
   settings: viewSettings,
 };
 const ui = { // transient UI state that survives re-renders
@@ -139,6 +142,7 @@ function render() {
   else { window.scrollTo(0, 0); main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter'); }
   const due = db.items.length > 0 && !db.reviewLog[today()];
   $$('.review-dot').forEach((d) => d.hidden = !due);
+  renderTimerBar(route);
 }
 window.addEventListener('hashchange', () => { if (location.hash.split('/')[1] !== 'review') ui.reviewQueue = null; render(); });
 onChange(render);
@@ -254,7 +258,8 @@ function readingRow(b) {
           <div class="muted small">p. ${b.currentPage || 0} of ${b.pages} · ${pct}%</div>` : `<div class="muted small">${b.currentPage ? 'p. ' + b.currentPage : ''}</div>`}
       </div>
       <div class="col gap-sm">
-        <button class="btn sm" data-action="log-session" data-id="${b.id}">Log progress</button>
+        <button class="btn sm" data-action="timer-start" data-id="${b.id}">Start reading</button>
+        <button class="btn sm ghost" data-action="log-session" data-id="${b.id}">Log progress</button>
         <button class="btn sm ghost" data-action="add-item" data-book="${b.id}">+ Highlight</button>
       </div>
     </div>`;
@@ -370,8 +375,10 @@ function viewBook(id) {
         ${b.tags?.length ? `<div class="tags">${b.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
         <div class="row gap wrap actions">
           <button class="btn primary" data-action="add-item" data-book="${b.id}">+ Add highlight</button>
+          <button class="btn" data-action="timer-start" data-id="${b.id}">Start reading</button>
           <button class="btn" data-action="log-session" data-id="${b.id}">Log reading</button>
           <button class="btn" data-action="edit-book" data-id="${b.id}">Edit</button>
+          <button class="btn ghost" data-action="social" data-id="${b.id}">Create a post</button>
           <button class="btn ghost" data-action="export-book" data-id="${b.id}">Export .md</button>
         </div>
       </div>
@@ -381,6 +388,11 @@ function viewBook(id) {
       <div class="section-head"><h2>My review</h2>${b.review ? `<span class="muted small">${b.reviewUpdatedAt ? 'Edited ' + fmtDate(b.reviewUpdatedAt) : ''}</span>` : ''}</div>
       <div class="card review-box">
         <textarea id="review-text" rows="${b.review ? Math.min(16, b.review.split('\n').length + 3) : 4}" placeholder="What did you think? What will you remember? Who would you recommend it to?">${esc(b.review)}</textarea>
+        <div class="voice-row">
+          ${micButton('#review-text', 'Speak your review')}
+          <button class="link-btn" data-action="tidy-review" data-id="${b.id}" title="${hasAI() ? 'Edit your spoken notes into clean prose with AI' : 'Basic clean-up (add a free AI key in Settings for a proper edit)'}">✦ Tidy${hasAI() ? ' with AI' : ''}</button>
+          <span class="interim muted"></span>
+        </div>
         <div class="row gap between center-v">
           <span class="muted small">Prompts: <a href="#" data-action="prompt" data-text="In one sentence, this book is about ">One-line summary</a> · <a href="#" data-action="prompt" data-text="It changed how I think about ">What changed</a> · <a href="#" data-action="prompt" data-text="I'd recommend it to ">Recommend to</a></span>
           <button class="btn primary sm" data-action="save-review" data-id="${b.id}">Save review</button>
@@ -546,7 +558,7 @@ function viewStats() {
   const thisMonth = finished.filter((b) => (b.finishedAt || '').startsWith(monthNow)).length;
 
   return `
-    <header class="page-head"><h1>Stats</h1></header>
+    <header class="page-head"><h1>Stats</h1><button class="btn primary" data-action="year-card">Share my year</button></header>
     <div class="stat-tiles">
       <div class="tile"><div class="num">${finished.length}</div><div class="muted small">books finished</div></div>
       <div class="tile"><div class="num">${pagesRead.toLocaleString()}</div><div class="muted small">pages read</div></div>
@@ -619,6 +631,21 @@ function viewSettings() {
     </section>
 
     <section class="card section">
+      <h2>AI assistant <span class="muted small">optional</span></h2>
+      <p class="muted small">Used for <b>Tidy with AI</b> (turns a rambling voice note into a clean review) and <b>Create a post</b> (captions and reel scripts). It uses Google's Gemini, which has a free tier: get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (sign in with Google, click <i>Create API key</i>), then paste it here.</p>
+      <p class="muted small">The key is stored only in this browser and is never included in backups. Text is sent to Google only when you press an AI button. On the free tier, Google may use what you send to improve its products — don't send anything private.</p>
+      <form class="form" data-form="ai">
+        <label>Gemini API key <input name="geminiKey" type="password" autocomplete="off" value="${esc(s.geminiKey || '')}" placeholder="AIza…"></label>
+        <label>Model <input name="geminiModel" value="${esc(s.geminiModel || '')}" placeholder="${DEFAULT_MODEL} (picked automatically if retired)"></label>
+        <div class="row gap wrap">
+          <button class="btn primary">Save key</button>
+          <button type="button" class="btn" data-action="test-ai">Test it</button>
+          ${s.geminiKey ? '<button type="button" class="btn ghost danger" data-action="remove-ai">Remove key</button>' : ''}
+        </div>
+      </form>
+    </section>
+
+    <section class="card section">
       <h2>Backup & export</h2>
       <p class="muted small">Your data lives only in this browser (${(bytes / 1024).toFixed(1)} KB). Export a backup now and then — especially before clearing browser data or switching devices.${db.lastBackup ? ` Last backup: ${fmtDate(db.lastBackup)}.` : ''}</p>
       <div class="row gap wrap">
@@ -632,12 +659,224 @@ function viewSettings() {
       <h2>Keyboard shortcuts</h2>
       <ul class="shortcuts">
         <li><kbd>n</kbd> new highlight</li><li><kbd>b</kbd> new book</li><li><kbd>/</kbd> search notebook</li>
-        <li><kbd>r</kbd> daily review</li><li><kbd>1</kbd>–<kbd>3</kbd> answer in review</li>
+        <li><kbd>r</kbd> daily review</li><li><kbd>t</kbd> reading timer</li><li><kbd>1</kbd>–<kbd>3</kbd> answer in review</li>
       </ul>
     </section>
 
     <p class="danger-zone"><button class="btn ghost danger sm" data-action="wipe">Erase all data</button></p>
   `;
+}
+
+// ============ READING TIMER ============
+// The timer is stored as timestamps, so it keeps counting if you close the app or lock your phone.
+function timerMs() {
+  const t = db.timer;
+  if (!t) return 0;
+  return t.elapsed + (t.startedAt ? Date.now() - t.startedAt : 0);
+}
+function fmtClock(ms) {
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const z = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${z(m)}:${z(sec)}` : `${z(m)}:${z(sec)}`;
+}
+function tickTimer() {
+  const t = db.timer;
+  const clock = t ? fmtClock(timerMs()) : '';
+  $$('.timer-clock').forEach((el) => { el.textContent = clock; });
+  document.title = t && t.startedAt ? `${clock} · ${getBook(t.bookId)?.title || 'Reading'}` : 'Bibliophile';
+}
+function renderTimerBar(route) {
+  const bar = $('#timer-bar');
+  const t = db.timer;
+  const book = t && getBook(t.bookId);
+  if (!book || route === 'timer') { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.innerHTML = `
+    <a href="#/timer" class="tb-main"><span class="tb-dot ${t.startedAt ? 'live' : ''}"></span><span class="tb-title">${esc(book.title)}</span><span class="timer-clock">${fmtClock(timerMs())}</span></a>
+    ${t.startedAt ? '<button class="link-btn" data-action="timer-pause">Pause</button>' : '<button class="link-btn" data-action="timer-resume">Resume</button>'}
+    <button class="link-btn" data-action="timer-stop">Done</button>`;
+}
+
+function viewTimer() {
+  const t = db.timer;
+  const book = t && getBook(t.bookId);
+  if (!book) {
+    const reading = db.books.filter((b) => b.status === 'reading');
+    const others = db.books.filter((b) => b.status !== 'reading' && b.status !== 'finished').sort((a, b) => a.title.localeCompare(b.title));
+    return `
+      <header class="page-head"><h1>Reading room</h1></header>
+      <p class="lede-sm">Start a timer when you sit down to read. It keeps running if you lock your phone or close the app, and logs the session when you're done.</p>
+      ${reading.length ? `<div class="pick-grid">${reading.map((b) => `
+        <button class="pick" data-action="timer-start" data-id="${b.id}">${cover(b, 'md')}<span><b>${esc(b.title)}</b><span class="byline">${esc(b.author)}</span><span class="eyebrow">Begin reading →</span></span></button>`).join('')}</div>`
+        : '<p class="muted">Nothing marked as currently reading.</p>'}
+      ${others.length ? `<p class="small muted">Or start something else:
+        <select data-timer-pick class="pick-select">
+          <option value="">Choose a book…</option>${others.map((b) => `<option value="${b.id}">${esc(b.title)}</option>`).join('')}
+        </select></p>` : ''}`;
+  }
+  const running = !!t.startedAt;
+  return `
+    <section class="reading-room">
+      <div class="eyebrow center">${running ? 'Now reading' : 'Paused'}</div>
+      <a href="#/book/${book.id}">${cover(book, 'lg')}</a>
+      <h1>${esc(book.title)}</h1>
+      <p class="byline">${esc(book.author)}${book.pages ? ` · from p. ${book.currentPage || 0}` : ''}</p>
+      <div class="timer-clock big ${running ? '' : 'paused'}">${fmtClock(timerMs())}</div>
+      <div class="row gap center wrap">
+        ${running ? '<button class="btn" data-action="timer-pause">Pause</button>' : '<button class="btn" data-action="timer-resume">Resume</button>'}
+        <button class="btn primary" data-action="timer-stop">Finish &amp; log</button>
+      </div>
+      <div class="row center gap room-links">
+        <button class="link-btn" data-action="add-item" data-book="${book.id}">Save a passage</button>
+        <button class="link-btn" data-action="timer-discard">Discard</button>
+      </div>
+    </section>`;
+}
+
+// ============ VOICE DICTATION ============
+// Uses the browser's built-in speech recognition (Chrome, Edge, Safari, Android). Free, no key needed.
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+function micButton(target, label = 'Dictate') {
+  if (!SpeechRec) return '';
+  return `<button type="button" class="link-btn mic" data-action="dictate" data-target="${target}"><span class="mic-dot"></span>${label}</button>`;
+}
+function toggleDictation(btn) {
+  if (rec) { rec.stop(); return; }
+  const target = $(btn.dataset.target, btn.closest('dialog') || document);
+  if (!target) return;
+  const interim = btn.parentElement.querySelector('.interim');
+  const label = btn.innerHTML;
+  rec = new SpeechRec();
+  rec.lang = navigator.language || 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onresult = (ev) => {
+    let live = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) {
+        const txt = r[0].transcript.trim();
+        target.value = (target.value && !/\s$/.test(target.value) ? target.value + ' ' : target.value) + txt;
+      } else live += r[0].transcript;
+    }
+    if (interim) interim.textContent = live;
+  };
+  rec.onerror = (ev) => { if (ev.error === 'not-allowed') toast('Microphone permission was blocked'); };
+  rec.onend = () => { rec = null; btn.classList.remove('on'); btn.innerHTML = label; if (interim) interim.textContent = ''; target.dispatchEvent(new Event('input')); };
+  rec.start();
+  btn.classList.add('on');
+  btn.innerHTML = '<span class="mic-dot"></span>Listening… tap to stop';
+}
+
+// ============ TIDY A REVIEW ============
+async function tidyFlow(book, btn) {
+  const original = $('#review-text').value.trim();
+  if (!original) { toast('Write or speak a review first'); return; }
+  let tidied, viaAI = hasAI();
+  if (viaAI) {
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Tidying…';
+    try { tidied = await tidyReview(original, book); }
+    catch (err) { toast('AI unavailable — did a basic tidy instead'); console.warn(err); viaAI = false; }
+    btn.disabled = false; btn.textContent = label;
+  }
+  if (!tidied) tidied = tidyLocally(original);
+  openModal(`
+    <h2>Tidied review</h2>
+    <p class="muted small">${viaAI ? 'Edited by AI from your words. Change anything before using it.' : 'Basic clean-up: filler words removed, sentences capitalised. Add a free AI key in Settings for a proper edit.'}</p>
+    <div class="compare">
+      <div><div class="eyebrow">Your words</div><div class="compare-orig">${nl2br(original)}</div></div>
+      <div><div class="eyebrow">Tidied</div><textarea id="tidied" rows="10">${esc(tidied)}</textarea></div>
+    </div>
+    <div class="row gap end">
+      <button class="btn ghost" data-action="close">Keep mine</button>
+      <button class="btn primary" id="use-tidied">Use tidied version</button>
+    </div>`, (root) => {
+    $('#use-tidied', root).onclick = () => {
+      book.review = $('#tidied', root).value.trim();
+      book.reviewUpdatedAt = new Date().toISOString();
+      closeModal(); save(); toast('Review updated');
+    };
+  });
+}
+
+// ============ CAPTION / REEL SCRIPT ============
+function socialModal(book) {
+  const quotes = itemsForBook(book.id).filter((i) => i.kind !== 'word').length;
+  const drafts = { caption: captionTemplate(book), reel: reelTemplate(book) };
+  let tab = 'caption';
+  openModal(`
+    <h2>Create a post</h2>
+    <p class="muted small">From ${plural(quotes, 'saved passage')}${book.review ? ', your review' : ''}${book.rating ? ' and your rating' : ''}. ${quotes ? '' : 'Save a few quotes first for a better result.'}</p>
+    <div class="chips social-tabs">
+      <button class="chip on" data-tab="caption">Caption</button>
+      <button class="chip" data-tab="reel">Reel script</button>
+    </div>
+    <textarea id="social-text" rows="14"></textarea>
+    <div class="row gap between wrap">
+      ${hasAI() ? '<button class="btn" id="social-ai">✦ Write with AI</button>' : '<span class="muted small">Templates are free and offline. <a href="#/settings" data-action="close">Add an AI key</a> for richer drafts.</span>'}
+      <div class="row gap">
+        <button class="btn ghost" id="social-reset">Reset</button>
+        <button class="btn primary" id="social-copy">Copy</button>
+      </div>
+    </div>`, (root) => {
+    const ta = $('#social-text', root);
+    const show = () => { ta.value = drafts[tab]; };
+    show();
+    ta.addEventListener('input', () => { drafts[tab] = ta.value; });
+    $$('[data-tab]', root).forEach((b) => b.addEventListener('click', () => {
+      tab = b.dataset.tab;
+      $$('[data-tab]', root).forEach((x) => x.classList.toggle('on', x === b));
+      show();
+    }));
+    $('#social-reset', root).onclick = () => { drafts[tab] = tab === 'caption' ? captionTemplate(book) : reelTemplate(book); show(); };
+    $('#social-copy', root).onclick = async () => { await navigator.clipboard?.writeText(ta.value).catch(() => {}); toast('Copied — paste it into Instagram, TikTok or Threads'); };
+    const ai = $('#social-ai', root);
+    if (ai) ai.onclick = async () => {
+      ai.disabled = true; ai.textContent = 'Writing…';
+      try { drafts[tab] = await (tab === 'caption' ? aiCaption(book) : aiReel(book)); show(); }
+      catch (err) { alert('AI request failed: ' + err.message); }
+      ai.disabled = false; ai.textContent = '✦ Write with AI';
+    };
+  });
+}
+
+// ============ YEAR IN BOOKS IMAGE ============
+async function yearModal() {
+  const years = yearsWithReading();
+  let year = years[0], theme = db.settings.theme === 'dark' ? 'night' : 'ivory', blob = null;
+  const names = { ivory: 'Ivory', night: 'Library at night', oxblood: 'Oxblood' };
+  openModal(`
+    <h2>Your year in books</h2>
+    <div class="row gap wrap between center-v year-controls">
+      <select id="yc-year">${years.map((y) => `<option>${y}</option>`).join('')}</select>
+      <div class="chips">${YEAR_THEMES.map((t) => `<button class="chip ${t === theme ? 'on' : ''}" data-yt="${t}">${names[t]}</button>`).join('')}</div>
+    </div>
+    <div class="year-preview"><p class="muted">Composing…</p></div>
+    <div class="row gap end">
+      ${navigator.canShare ? '<button class="btn" id="yc-share">Share…</button>' : ''}
+      <button class="btn primary" id="yc-dl">Download</button>
+    </div>`, (root) => {
+    const preview = $('.year-preview', root);
+    const draw = async () => {
+      preview.innerHTML = '<p class="muted">Composing…</p>';
+      blob = await yearCard(year, theme);
+      preview.innerHTML = `<img src="${URL.createObjectURL(blob)}" alt="My ${year} in books">`;
+    };
+    $('#yc-year', root).onchange = (e) => { year = e.target.value; draw(); };
+    $$('[data-yt]', root).forEach((b) => b.addEventListener('click', () => {
+      theme = b.dataset.yt; $$('[data-yt]', root).forEach((x) => x.classList.toggle('on', x === b)); draw();
+    }));
+    $('#yc-dl', root).onclick = () => blob && download(`my-${year}-in-books.png`, blob);
+    const sh = $('#yc-share', root);
+    if (sh) sh.onclick = async () => {
+      if (!blob) return;
+      const file = new File([blob], `my-${year}-in-books.png`, { type: 'image/png' });
+      try { if (navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: `My ${year} in books` }); else download(file.name, blob); } catch {}
+    };
+    draw();
+  });
 }
 
 // ============ FORMS ============
@@ -740,8 +979,9 @@ function itemForm(item = {}, presetBook = '') {
         ${Object.entries(KINDS).map(([k, v]) => `<label><input type="radio" name="kind" value="${k}" ${kind === k ? 'checked' : ''}><span>${v.icon} ${v.label}</span></label>`).join('')}
       </div>
       <label><span class="text-label">${kind === 'word' ? 'Word' : 'Text'}</span>
-        <textarea name="text" rows="5" required autofocus placeholder="Type or paste the passage…">${esc(item.text || '')}</textarea>
+        <textarea name="text" rows="5" required autofocus placeholder="Type, paste or dictate the passage…">${esc(item.text || '')}</textarea>
       </label>
+      ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Dictate passage')}${micButton('[name=note]', 'Dictate note')}<span class="interim muted"></span></div>` : ''}
       <label><span class="note-label-text">${kind === 'word' ? 'Definition' : 'My note (optional)'}</span>
         <textarea name="note" rows="2" placeholder="Why it mattered, what it reminds you of…">${esc(item.note || '')}</textarea>
       </label>
@@ -779,15 +1019,15 @@ function itemForm(item = {}, presetBook = '') {
   });
 }
 
-function sessionForm(book) {
+function sessionForm(book, prefill = {}) {
   openModal(`
     <h2>Log reading</h2>
-    <p class="muted">${esc(book.title)} — currently on page ${book.currentPage || 0}${book.pages ? ` of ${book.pages}` : ''}</p>
+    <p class="muted">${esc(book.title)} — currently on page ${book.currentPage || 0}${book.pages ? ` of ${book.pages}` : ''}${prefill.minutes ? `. You read for <b>${plural(prefill.minutes, 'minute')}</b> — which page did you reach?` : ''}</p>
     <form class="form" data-form="session">
       <input type="hidden" name="id" value="${book.id}">
       <div class="row gap">
         <label class="grow">Now on page <input name="toPage" type="number" min="0" ${book.pages ? `max="${book.pages}"` : ''} required autofocus value=""></label>
-        <label class="grow">Minutes <input name="minutes" type="number" min="0" placeholder="optional"></label>
+        <label class="grow">Minutes <input name="minutes" type="number" min="0" placeholder="optional" value="${prefill.minutes || ''}"></label>
         <label class="grow">Date <input name="date" type="date" value="${today()}"></label>
       </div>
       ${book.pages ? `<button type="button" class="btn sm ghost" data-action="finish-now">I finished it!</button>` : ''}
@@ -913,6 +1153,43 @@ document.addEventListener('click', async (e) => {
       ui.nTag = ui.nTag === el.dataset.tag ? '' : el.dataset.tag;
       if (!location.hash.startsWith('#/notes')) location.hash = '#/notes'; else render();
       break;
+    case 'timer-start': {
+      const t = db.timer;
+      if (t && t.bookId !== id && !confirm(`Stop the timer for “${getBook(t.bookId)?.title || 'another book'}” and start this one?`)) break;
+      if (!t || t.bookId !== id) db.timer = { bookId: id, startedAt: Date.now(), elapsed: 0 };
+      else if (!t.startedAt) t.startedAt = Date.now();
+      save();
+      location.hash = '#/timer';
+      break;
+    }
+    case 'timer-pause': { const t = db.timer; if (t?.startedAt) { t.elapsed += Date.now() - t.startedAt; t.startedAt = null; save(); } break; }
+    case 'timer-resume': { const t = db.timer; if (t && !t.startedAt) { t.startedAt = Date.now(); save(); } break; }
+    case 'timer-stop': {
+      const t = db.timer; if (!t) break;
+      const minutes = Math.max(1, Math.round(timerMs() / 60000));
+      const book = getBook(t.bookId);
+      db.timer = null; save();
+      if (book) sessionForm(book, { minutes });
+      break;
+    }
+    case 'timer-discard':
+      if (confirm('Discard this reading session without logging it?')) { db.timer = null; save(); }
+      break;
+    case 'dictate': toggleDictation(el); break;
+    case 'tidy-review': tidyFlow(getBook(id), el); break;
+    case 'social': socialModal(getBook(id)); break;
+    case 'year-card': yearModal(); break;
+    case 'test-ai': {
+      const key = $('form[data-form=ai] [name=geminiKey]').value.trim();
+      if (!key) { toast('Paste a key first'); break; }
+      el.disabled = true; el.textContent = 'Testing…';
+      try { const model = await testKey(key); db.settings.geminiKey = key; db.settings.geminiModel = model; save(); toast(`It works — using ${model}`); }
+      catch (err) { alert('That key did not work: ' + err.message); el.disabled = false; el.textContent = 'Test it'; }
+      break;
+    }
+    case 'remove-ai':
+      if (confirm('Remove your AI key from this device?')) { db.settings.geminiKey = ''; save(); toast('Key removed'); }
+      break;
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
     case 'review':
@@ -932,6 +1209,7 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.change) { ui[el.dataset.change] = el.value; render(); return; }
+  if (el.matches('[data-timer-pick]') && el.value) { db.timer = { bookId: el.value, startedAt: Date.now(), elapsed: 0 }; save(); return; }
   if (el.dataset.actionChange === 'status') {
     const b = getBook(el.dataset.id);
     upsertBook({ id: b.id, status: el.value });
@@ -1014,6 +1292,10 @@ document.addEventListener('submit', (e) => {
       dailyReview: Math.max(1, Number(fd.dailyReview) || 5), theme: fd.theme,
     });
     save(); applyTheme(); toast('Settings saved');
+  } else if (type === 'ai') {
+    db.settings.geminiKey = fd.geminiKey.trim();
+    db.settings.geminiModel = fd.geminiModel.trim();
+    save(); toast(db.settings.geminiKey ? 'Key saved — press “Test it” to check it' : 'Key cleared');
   }
 });
 
@@ -1030,10 +1312,19 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'b') { e.preventDefault(); bookForm(); }
   else if (e.key === '/') { e.preventDefault(); location.hash = '#/notes'; setTimeout(() => $('[data-input=nQuery]')?.focus(), 0); }
   else if (e.key === 'r') location.hash = '#/review';
+  else if (e.key === 't') location.hash = '#/timer';
 });
 
 // ---------- boot ----------
 applyTheme();
 render();
+// Home-screen shortcuts open e.g. index.html?do=add
+{
+  const act = new URLSearchParams(location.search).get('do');
+  if (act) history.replaceState(null, '', location.pathname + location.hash);
+  if (act === 'add') itemForm({}, db.timer?.bookId || '');
+}
+setInterval(tickTimer, 1000);
+tickTimer();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});

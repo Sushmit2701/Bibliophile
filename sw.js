@@ -1,6 +1,6 @@
 // Offline support: cache the app shell, network-first so updates arrive when online.
-const CACHE = 'bibliophile-v2';
-const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/importers.js', 'js/share.js', 'manifest.webmanifest', 'icons/icon.svg'];
+const CACHE = 'bibliophile-v3';
+const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/importers.js', 'js/share.js', 'js/ai.js', 'js/yearcard.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,8 +12,10 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.hostname === 'openlibrary.org') return; // live search only
+  const isFont = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   const isCover = url.hostname === 'covers.openlibrary.org';
+  // Leave everything else that isn't the app itself (book search, AI) to the network.
+  if (url.origin !== location.origin && !isFont && !isCover) return;
   if (isCover) {
     // cache-first for cover images so the shelf works offline
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
@@ -22,7 +24,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   e.respondWith(fetch(req).then((res) => {
-    if (res.ok && (url.origin === location.origin || url.hostname.includes('fonts.'))) {
+    if (res.ok) {
       const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy));
     }
     return res;
