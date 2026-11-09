@@ -9,6 +9,7 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 **Books**
 - Library with shelves: *Want to read · Reading · Finished · Paused · Did not finish*
 - Search Open Library to auto-fill the title, author, pages, year, ISBN and cover
+- **Real covers, saved in the app:** each cover is downloaded once and stored in your browser, so it shows offline, won't disappear if a website changes, and appears in your year image. If Open Library has no cover, the app checks Google Books (by ISBN, then by title and author). You can also upload a photo of your own copy. *Settings → Covers → Save all covers* fills in your whole library. Covers are downloaded through [wsrv.nl](https://wsrv.nl), a free image relay, because Google Books and Open Library don't let web pages save their images directly. Saved covers are included in your backup file.
 - **Half-star ratings** (e.g. 3.5★), plus an optional **detailed rating**: score Writing, Story & ideas, Emotional pull and Staying power from 1 to 5, and get a suggested overall rating. Stats shows your averages for each.
 - Tags, format (print / ebook / audiobook), start and finish dates
 - **Reading log**: record the page you're on and the minutes you read. It tracks progress and marks the book finished when you reach the last page.
@@ -81,6 +82,7 @@ js/app.js             views, forms, routing, events
 js/importers.js       Kindle / Readwise / Goodreads importers
 js/share.js           quote-card images and Markdown export
 js/yearcard.js        "my year in books" story image
+js/covers.js          cover lookup (Open Library → Google Books), saved copies, backup
 js/ai.js              Gemini calls, review tidying, caption / reel templates
 sw.js, manifest.webmanifest, icons/   offline support and installable app
 ```

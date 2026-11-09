@@ -8,6 +8,10 @@ import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
 import { hasAI, testKey, tidyLocally, tidyReview, captionTemplate, reelTemplate, aiCaption, aiReel, DEFAULT_MODEL } from './ai.js';
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
+import {
+  loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
+  useUploadedCover, removeCover, clearCovers, exportCovers, importCovers,
+} from './covers.js';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -76,8 +80,9 @@ const CLOTH = ["#5a1a1f", "#1f3a2f", "#1d2a44", "#3f2440", "#5b3b1c", "#2c3b40",
 function cover(book, size = '') {
   const cloth = CLOTH[hashHue(book.title || "?") % CLOTH.length];
   const fallback = `<div class="cover-fallback" style="--cloth:${cloth}"><span>${esc(book.title)}</span><small>${esc(book.author)}</small></div>`;
-  if (!book.cover) return `<div class="cover ${size}">${fallback}</div>`;
-  return `<div class="cover ${size}"><img src="${esc(book.cover)}" alt="" loading="lazy" onerror="this.remove()">${fallback}</div>`;
+  const src = coverSrc(book);
+  if (!src) return `<div class="cover ${size}">${fallback}</div>`;
+  return `<div class="cover ${size}"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()">${fallback}</div>`;
 }
 
 let toastTimer;
@@ -353,7 +358,10 @@ function viewBook(id) {
   return `
     <a href="#/library" class="back">← Library</a>
     <section class="book-head">
-      ${cover(b, 'lg')}
+      <div class="cover-col">
+        ${cover(b, 'lg')}
+        ${hasSavedCover(b.id) ? '' : `<button class="link-btn" data-action="find-cover" data-id="${b.id}">${b.cover ? 'Save cover offline' : 'Find the cover'}</button>`}
+      </div>
       <div class="grow">
         <h1>${esc(b.title)}</h1>
         <p class="author">${esc(b.author)}${b.year ? ` <span class="muted">· ${esc(b.year)}</span>` : ''}</p>
@@ -646,6 +654,12 @@ function viewSettings() {
     </section>
 
     <section class="card section">
+      <h2>Covers</h2>
+      <p class="muted small">${savedCoverCount()} of ${plural(db.books.length, 'book')} have their cover saved in the app, so they show offline and appear in your year image. Covers come from Open Library, then Google Books, and are downloaded through <a href="https://wsrv.nl" target="_blank" rel="noopener">wsrv.nl</a>, a free image relay. Saved covers are included in your backup file.</p>
+      <button class="btn" data-action="save-all-covers">Save all covers</button>
+    </section>
+
+    <section class="card section">
       <h2>Backup & export</h2>
       <p class="muted small">Your data lives only in this browser (${(bytes / 1024).toFixed(1)} KB). Export a backup now and then — especially before clearing browser data or switching devices.${db.lastBackup ? ` Last backup: ${fmtDate(db.lastBackup)}.` : ''}</p>
       <div class="row gap wrap">
@@ -893,7 +907,7 @@ function bookForm(book = {}) {
     <form class="form" data-form="book">
       <input type="hidden" name="id" value="${esc(book.id || '')}">
       <div class="row gap">
-        <div id="form-cover">${cover({ title: book.title || '', author: book.author || '', cover: book.cover }, 'sm')}</div>
+        <div id="form-cover">${cover({ id: book.id, title: book.title || '', author: book.author || '', cover: book.cover }, 'sm')}</div>
         <div class="grow col gap-sm">
           <label>Title <input name="title" required value="${esc(book.title || '')}" ${isNew ? '' : 'autofocus'}></label>
           <label>Author <input name="author" value="${esc(book.author || '')}"></label>
@@ -917,12 +931,21 @@ function bookForm(book = {}) {
         <label class="grow">Finished <input name="finishedAt" type="date" value="${esc(book.finishedAt || '')}"></label>
       </div>
       <label>Tags <input name="tags" value="${esc((book.tags || []).join(', '))}" placeholder="fiction, philosophy, book-club"></label>
-      <label>Cover image URL <input name="cover" value="${esc(book.cover || '')}" placeholder="https://…"></label>
+      <div class="row gap">
+        <label class="grow">Cover image URL <input name="cover" value="${esc(book.cover || '')}" placeholder="filled in automatically"></label>
+        <label class="grow">Or a photo of your copy <input name="coverFile" type="file" accept="image/*"></label>
+      </div>
+      <p class="muted small form-hint">Leave both empty and the cover is found for you (Open Library, then Google Books).</p>
       <div class="row gap end">
         <button type="button" class="btn ghost" data-action="close">Cancel</button>
         <button class="btn primary">${isNew ? 'Add book' : 'Save'}</button>
       </div>
     </form>`, (root) => {
+    const fileInput = $('[name=coverFile]', root);
+    fileInput?.addEventListener('change', () => {
+      const f = fileInput.files?.[0];
+      if (f) $('#form-cover', root).innerHTML = `<div class="cover sm"><img src="${URL.createObjectURL(f)}" alt=""></div>`;
+    });
     const q = $('#ol-q', root);
     if (!q) return;
     let timer, ctl;
@@ -1080,7 +1103,7 @@ document.addEventListener('click', async (e) => {
     case 'edit-item': itemForm(getItem(id)); break;
     case 'log-session': sessionForm(getBook(id)); break;
     case 'delete-book':
-      if (confirm(`Delete this book and its ${itemsForBook(id).length} highlights? This can't be undone.`)) { deleteBook(id); location.hash = '#/library'; toast('Book deleted'); }
+      if (confirm(`Delete this book and its ${itemsForBook(id).length} highlights? This can't be undone.`)) { deleteBook(id); removeCover(id); location.hash = '#/library'; toast('Book deleted'); }
       break;
     case 'delete-item':
       if (confirm('Delete this passage?')) { deleteItem(id); toast('Deleted'); }
@@ -1136,14 +1159,33 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'export-book': { const b = getBook(id); download(`${b.title.replace(/[^\w ]+/g, '').trim() || 'book'}.md`, bookMarkdown(b)); break; }
-    case 'export-json':
-      download(`bibliophile-backup-${today()}.json`, exportJSON(), 'application/json');
+    case 'export-json': {
+      const data = JSON.parse(exportJSON());
+      data.coverImages = await exportCovers();
+      download(`bibliophile-backup-${today()}.json`, JSON.stringify(data), 'application/json');
       db.lastBackup = new Date().toISOString(); save();
       break;
+    }
+    case 'find-cover': {
+      const b = getBook(id);
+      el.disabled = true; el.textContent = 'Looking…';
+      const r = await ensureCover(b, { force: true });
+      if (r === 'none') { toast('No cover found — you can upload a photo via Edit'); el.disabled = false; el.textContent = 'Find the cover'; }
+      else toast(r === 'found' ? 'Found the cover on Google Books' : 'Cover saved');
+      break;
+    }
+    case 'save-all-covers': {
+      el.disabled = true;
+      const r = await ensureAll(db.books, (i, n) => { el.textContent = `Working… ${i} of ${n}`; });
+      el.disabled = false; el.textContent = 'Save all covers';
+      toast(r.checked ? `Saved ${r.saved + r.found} covers${r.found ? ` (${r.found} from Google Books)` : ''}${r.none ? ` · ${r.none} not found` : ''}` : 'Every book already has its cover saved');
+      render();
+      break;
+    }
     case 'export-md': download(`bibliophile-${today()}.md`, allMarkdown()); break;
     case 'wipe':
       if (confirm('Erase ALL books, highlights and settings from this device?') && prompt('Type ERASE to confirm') === 'ERASE') {
-        db.books = []; db.items = []; db.reviewLog = {}; save(); toast('All data erased');
+        db.books = []; db.items = []; db.reviewLog = {}; clearCovers(); save(); toast('All data erased');
       }
       break;
     case 'lib-status': ui.libStatus = el.dataset.value; render(); break;
@@ -1227,11 +1269,15 @@ document.addEventListener('change', async (e) => {
       const kind = el.dataset.import;
       if (kind === 'kindle') { const r = importKindle(text); toast(`Imported ${r.added} highlights${r.skipped ? ` (${r.skipped} duplicates skipped)` : ''}`); }
       if (kind === 'readwise') { const r = importReadwise(text); toast(`Imported ${r.added} highlights${r.skipped ? ` (${r.skipped} duplicates skipped)` : ''}`); }
-      if (kind === 'goodreads') { const r = importGoodreads(text); toast(`Added ${r.added} books, updated ${r.updated}`); }
-      if (kind === 'json') { importJSON(text, 'merge'); toast('Backup merged'); }
+      if (kind === 'goodreads') { const r = importGoodreads(text); toast(`Added ${r.added} books, updated ${r.updated} — fetching covers in the background`); }
+      if (kind === 'json') { importJSON(text, 'merge'); await importCovers(JSON.parse(text).coverImages); toast('Backup merged'); }
       if (kind === 'json-replace') {
-        if (confirm('Replace ALL current data with this backup?')) { importJSON(text, 'replace'); applyTheme(); toast('Backup restored'); }
+        if (confirm('Replace ALL current data with this backup?')) {
+          importJSON(text, 'replace'); await clearCovers(); await importCovers(JSON.parse(text).coverImages, { overwrite: true });
+          applyTheme(); toast('Backup restored');
+        }
       }
+      if (['kindle', 'readwise', 'goodreads', 'json', 'json-replace'].includes(kind)) ensureAll(db.books);
     } catch (err) {
       alert('Import failed: ' + err.message);
     }
@@ -1267,8 +1313,12 @@ document.addEventListener('submit', (e) => {
     };
     if (fd.id) data.id = fd.id;
     if (!fd.id && data.status === 'finished' && data.pages) data.currentPage = data.pages;
+    const before = fd.id ? getBook(fd.id)?.cover : null;
     const b = upsertBook(data);
     closeModal();
+    const file = fd.coverFile && fd.coverFile.size ? fd.coverFile : null;
+    if (file) useUploadedCover(b, file).then(() => toast('Cover saved')).catch(() => toast('Could not read that image'));
+    else ensureCover(b, { force: !!fd.id && data.cover !== before });
     if (!fd.id) { location.hash = `#/book/${b.id}`; toast('Book added'); }
   } else if (type === 'item') {
     const data = {
@@ -1318,6 +1368,12 @@ document.addEventListener('keydown', (e) => {
 // ---------- boot ----------
 applyTheme();
 render();
+onCoverChange(render);
+loadCovers().then(() => {
+  render();
+  // Quietly save covers for any books that don't have one yet (e.g. added before this feature).
+  setTimeout(() => ensureAll(db.books), 3000);
+});
 // Home-screen shortcuts open e.g. index.html?do=add
 {
   const act = new URLSearchParams(location.search).get('do');

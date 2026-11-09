@@ -570,3 +570,8 @@ dialog::backdrop { background: rgba(18, 12, 6, .45); backdrop-filter: blur(3px);
   main { overflow-x: clip; }
 }
 @media (max-width: 760px) { .stat-tiles { grid-template-columns: 1fr 1fr; } .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* covers */
+.cover-col { display: flex; flex-direction: column; align-items: center; gap: .9rem; flex-shrink: 0; }
+.form-hint { margin: -.4rem 0 0; font-style: italic; }
+.form label input[type=file] { padding: .45rem .6rem; font-size: .82rem; }

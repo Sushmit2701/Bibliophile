@@ -1,6 +1,6 @@
 // Offline support: cache the app shell, network-first so updates arrive when online.
-const CACHE = 'bibliophile-v3';
-const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/importers.js', 'js/share.js', 'js/ai.js', 'js/yearcard.js', 'manifest.webmanifest', 'icons/icon.svg'];
+const CACHE = 'bibliophile-v4';
+const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/importers.js', 'js/share.js', 'js/ai.js', 'js/yearcard.js', 'js/covers.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

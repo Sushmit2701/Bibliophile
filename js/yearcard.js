@@ -1,5 +1,6 @@
 // "My year in books" — a 1080×1920 story-sized image built from your reading log.
 import { db, itemsForBook, fmtRating } from './store.js';
+import { coverSrc } from './covers.js';
 
 const THEMES = {
   ivory: { bg: '#f6f1e7', fg: '#1d1a17', soft: '#4a433c', muted: '#8b8176', accent: '#6e1f24', gold: '#a8843f', rule: '#d9cdb8' },
@@ -93,7 +94,7 @@ async function drawCovers(ctx, books, x, y, width, t, useImages) {
   const w = Math.min(n > 4 ? 165 : 190, (width - gap * (cols - 1)) / cols);
   const h = w * 1.5;
   const rowW = Math.min(shown.length, cols) * w + (Math.min(shown.length, cols) - 1) * gap;
-  const imgs = useImages ? await Promise.all(shown.map((b) => (b.cover ? loadImage(b.cover) : null))) : shown.map(() => null);
+  const imgs = useImages ? await Promise.all(shown.map((b) => (coverSrc(b) ? loadImage(coverSrc(b)) : null))) : shown.map(() => null);
   shown.forEach((b, i) => {
     const r = Math.floor(i / cols), c = i % cols;
     const inRow = Math.min(cols, shown.length - r * cols);
