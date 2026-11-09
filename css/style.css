@@ -591,3 +591,9 @@ mark { background: linear-gradient(transparent 55%, var(--gold-soft) 55%); color
 .form .row > * { min-width: 0; }
 .form select { max-width: 100%; text-overflow: ellipsis; }
 dialog { max-width: calc(100vw - 1rem); overflow-x: hidden; }
+
+/* unsaved work */
+@keyframes nudge { 0%, 100% { transform: none; } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
+dialog.nudge { animation: nudge .38s ease; }
+.draft-note { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; padding: .6rem .9rem; background: var(--gold-soft); color: var(--text); font: italic .95rem var(--serif); border-radius: 2px; }
+.unsaved-note { font: italic .9rem var(--serif); color: var(--accent); margin: -.4rem 0 .8rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }

@@ -107,15 +107,97 @@ function applyTheme() {
 
 // ---------- modal ----------
 const dlg = $('#modal');
-function openModal(html, onMount) {
+let modalSnapshot = '';
+let modalDraft = null; // 'item' | 'book' when the open form keeps a draft
+
+// Only typed text counts — changing a dropdown or a style shouldn't lock the window.
+function modalText() {
+  return $$('#modal-body textarea, #modal-body input:not([type]), #modal-body input[type=text], #modal-body input[type=number], #modal-body input[type=url]')
+    .map((el) => el.value.trim()).join('\u0001');
+}
+const modalDirty = () => dlg.open && modalText() !== modalSnapshot;
+
+// ---- drafts: what you type in a new passage / book form is kept until you save or discard it ----
+const DRAFT_KEY = (k) => `bibliophile:draft:${k}`;
+function readDraft(k) {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY(k)) || 'null');
+    return d && Date.now() - d.at < 14 * 864e5 ? d : null;
+  } catch { return null; }
+}
+function clearDraft(k) { try { localStorage.removeItem(DRAFT_KEY(k)); } catch {} }
+function writeDraft(k, form) {
+  const values = {};
+  for (const el of form.elements) {
+    if (!el.name || el.type === 'file' || el.type === 'hidden' || el.type === 'submit' || el.tagName === 'BUTTON') continue;
+    if (el.type === 'radio') { if (el.checked) values[el.name] = el.value; }
+    else if (el.type === 'checkbox') values[el.name] = el.checked;
+    else values[el.name] = el.value;
+  }
+  const hasText = Object.values(values).some((v) => typeof v === 'string' && v.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(v));
+  try { hasText ? localStorage.setItem(DRAFT_KEY(k), JSON.stringify({ at: Date.now(), values })) : clearDraft(k); } catch {}
+}
+function applyDraft(form, values) {
+  for (const [name, v] of Object.entries(values)) {
+    const els = form.querySelectorAll(`[name="${name}"]`);
+    els.forEach((el) => {
+      if (el.type === 'radio') { if (el.value === v && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change')); } }
+      else if (el.type === 'checkbox') el.checked = !!v;
+      else el.value = v;
+    });
+  }
+  form.bookId?.dispatchEvent(new Event('change'));
+}
+
+function openModal(html, onMount, opts = {}) {
   $('#modal-body').innerHTML = html;
-  dlg.showModal();
+  if (!dlg.open) dlg.showModal();
   onMount && onMount($('#modal-body'));
-  const first = $('#modal-body [autofocus]');
+  modalDraft = opts.draft || null;
+  const form = $('#modal-body form');
+  if (modalDraft && form) {
+    const d = opts.restore !== false && readDraft(modalDraft);
+    if (d) {
+      applyDraft(form, d.values);
+      form.insertAdjacentHTML('afterbegin', `<div class="draft-note"><span>Restored what you were writing.</span><button type="button" class="link-btn" data-action="discard-draft">Start fresh</button></div>`);
+    }
+    let t;
+    form.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => writeDraft(modalDraft, form), 250); });
+    form.addEventListener('change', () => writeDraft(modalDraft, form));
+  }
+  modalSnapshot = $('.draft-note', form || document) ? '' : modalText(); // a restored draft counts as unsaved work
+  const first = $('#modal-body [autofocus]:not([hidden] *)');
   first && first.focus();
 }
-function closeModal() { dlg.close(); }
-dlg.addEventListener('click', (e) => { if (e.target === dlg) closeModal(); });
+// Closing after a successful save (or any deliberate action in code).
+function closeModal() { modalDraft = null; dlg.close(); }
+// Closing because the person asked to (Cancel / Escape): check first if they'd lose typing.
+function requestClose() {
+  if (modalDirty() && !confirm('Discard what you’ve written?')) return;
+  if (modalDraft) clearDraft(modalDraft);
+  closeModal();
+}
+dlg.addEventListener('click', (e) => {
+  if (e.target !== dlg) return; // a tap inside the window
+  // A tap outside the window: close only if nothing has been typed.
+  if (!modalDirty()) return closeModal();
+  dlg.classList.remove('nudge'); void dlg.offsetWidth; dlg.classList.add('nudge');
+  toast('Your writing is safe — tap Cancel if you meant to close');
+});
+dlg.addEventListener('cancel', (e) => { // Escape key / Android back gesture
+  if (!modalDirty()) return;
+  e.preventDefault();
+  requestClose();
+});
+
+// ---------- unsaved review text ----------
+const reviewDraft = (id) => { try { return localStorage.getItem(`bibliophile:draft:review:${id}`); } catch { return null; } };
+function setReviewDraft(id, text) {
+  try { text == null ? localStorage.removeItem(`bibliophile:draft:review:${id}`) : localStorage.setItem(`bibliophile:draft:review:${id}`, text); } catch {}
+}
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'review-text') setReviewDraft(e.target.dataset.book, e.target.value);
+});
 
 // ---------- router ----------
 const routes = {
@@ -141,7 +223,11 @@ function render() {
   const main = $('#main');
   const scroll = window.scrollY;
   const sameRoute = main.dataset.route === location.hash;
+  // Keep the cursor where it was if the page redraws while you're typing.
+  const active = document.activeElement;
+  const keep = sameRoute && active && main.contains(active) && active.id ? { id: active.id, a: active.selectionStart, b: active.selectionEnd } : null;
   main.innerHTML = view(decodeURIComponent(param || ''));
+  if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.a, keep.b); } catch {} } }
   main.dataset.route = location.hash;
   if (sameRoute) window.scrollTo(0, scroll);
   else { window.scrollTo(0, 0); main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter'); }
@@ -395,7 +481,9 @@ function viewBook(id) {
     <section class="section">
       <div class="section-head"><h2>My review</h2>${b.review ? `<span class="muted small">${b.reviewUpdatedAt ? 'Edited ' + fmtDate(b.reviewUpdatedAt) : ''}</span>` : ''}</div>
       <div class="card review-box">
-        <textarea id="review-text" rows="${b.review ? Math.min(16, b.review.split('\n').length + 3) : 4}" placeholder="What did you think? What will you remember? Who would you recommend it to?">${esc(b.review)}</textarea>
+        ${(() => { const draft = reviewDraft(b.id); const text = draft ?? b.review; return `
+        <textarea id="review-text" data-book="${b.id}" rows="${text ? Math.min(16, text.split('\n').length + 3) : 4}" placeholder="What did you think? What will you remember? Who would you recommend it to?">${esc(text)}</textarea>
+        ${draft != null && draft !== b.review ? `<p class="unsaved-note">Unsaved changes — they're kept until you save. <button class="link-btn" data-action="discard-review" data-id="${b.id}">Undo changes</button></p>` : ''}`; })()}
         <div class="voice-row">
           ${micButton('#review-text', 'Speak your review')}
           <button class="link-btn" data-action="tidy-review" data-id="${b.id}" title="${hasAI() ? 'Edit your spoken notes into clean prose with AI' : 'Basic clean-up (add a free AI key in Settings for a proper edit)'}">✦ Tidy${hasAI() ? ' with AI' : ''}</button>
@@ -810,6 +898,7 @@ async function tidyFlow(book, btn) {
     $('#use-tidied', root).onclick = () => {
       book.review = $('#tidied', root).value.trim();
       book.reviewUpdatedAt = new Date().toISOString();
+      setReviewDraft(book.id, null);
       closeModal(); save(); toast('Review updated');
     };
   });
@@ -895,7 +984,7 @@ async function yearModal() {
 
 // ============ FORMS ============
 
-function bookForm(book = {}) {
+function bookForm(book = {}, opts = {}) {
   const isNew = !book.id;
   openModal(`
     <h2>${isNew ? 'Add a book' : 'Edit book'}</h2>
@@ -986,10 +1075,10 @@ function bookForm(book = {}) {
         }
       }, 350);
     });
-  });
+  }, book.id ? {} : { draft: 'book', restore: opts.restore !== false });
 }
 
-function itemForm(item = {}, presetBook = '') {
+function itemForm(item = {}, presetBook = '', opts = {}) {
   const isNew = !item.id;
   const bookId = item.bookId ?? presetBook;
   const books = db.books.slice().sort((a, b) => (b.status === 'reading') - (a.status === 'reading') || a.title.localeCompare(b.title));
@@ -1066,7 +1155,7 @@ function itemForm(item = {}, presetBook = '') {
       else if (w && !f.context.value && /\s/.test(f.text.value.trim())) { f.context.value = f.text.value.trim(); f.text.value = ''; }
       (w ? f.word : f.text).focus();
     }));
-  });
+  }, isNew ? { draft: 'item', restore: opts.restore !== false && !item.text && !item.context } : {});
 }
 
 // Free dictionary (dictionaryapi.dev, English). Fills the meaning field; you can edit it.
@@ -1160,7 +1249,8 @@ document.addEventListener('click', async (e) => {
   if (el.tagName === 'A' || el.tagName === 'BUTTON') e.preventDefault();
 
   switch (a) {
-    case 'close': closeModal(); break;
+    case 'close': requestClose(); break;
+    case 'discard-draft': { const k = modalDraft; clearDraft(k); if (k === 'item') itemForm({}, '', { restore: false }); else if (k === 'book') bookForm({}, { restore: false }); break; }
     case 'add-book': bookForm(); break;
     case 'edit-book': bookForm(getBook(id)); break;
     case 'add-item': itemForm({}, el.dataset.book || ''); break;
@@ -1209,10 +1299,12 @@ document.addEventListener('click', async (e) => {
       const b = getBook(id); b.rating = suggestedRating(b.aspects); b.ratingFromAspects = true; save();
       break;
     }
+    case 'discard-review': setReviewDraft(id, null); render(); break;
     case 'save-review': {
       const b = getBook(id);
       b.review = $('#review-text').value.trim();
       b.reviewUpdatedAt = new Date().toISOString();
+      setReviewDraft(b.id, null);
       save(); toast('Review saved');
       break;
     }
@@ -1220,6 +1312,7 @@ document.addEventListener('click', async (e) => {
       const ta = $('#review-text');
       ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n\n' : '') + el.dataset.text;
       ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
       break;
     }
     case 'export-book': { const b = getBook(id); download(`${b.title.replace(/[^\w ]+/g, '').trim() || 'book'}.md`, bookMarkdown(b)); break; }
@@ -1394,6 +1487,7 @@ document.addEventListener('submit', (e) => {
     if (!fd.id && data.status === 'finished' && data.pages) data.currentPage = data.pages;
     const before = fd.id ? getBook(fd.id)?.cover : null;
     const b = upsertBook(data);
+    if (!fd.id) clearDraft('book');
     closeModal();
     const file = fd.coverFile && fd.coverFile.size ? fd.coverFile : null;
     if (file) useUploadedCover(b, file).then(() => toast('Cover saved')).catch(() => toast('Could not read that image'));
@@ -1411,6 +1505,7 @@ document.addEventListener('submit', (e) => {
     };
     if (fd.id) data.id = fd.id;
     upsertItem(data);
+    clearDraft('item');
     toast('Saved');
     if (e.submitter?.name === 'again') {
       itemForm({ kind: data.kind, bookId: data.bookId, source: data.source, chapter: data.chapter, tags: data.tags }, data.bookId);
