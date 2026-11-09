@@ -6,7 +6,7 @@ import {
 } from './store.js';
 import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
-import { hasAI, testKey, tidyLocally, tidyReview, captionTemplate, reelTemplate, aiCaption, aiReel, DEFAULT_MODEL } from './ai.js';
+import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate, reelTemplate, aiCaption, aiReel, DEFAULT_MODEL } from './ai.js';
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
@@ -485,7 +485,7 @@ function viewBook(id) {
         <textarea id="review-text" data-book="${b.id}" rows="${text ? Math.min(16, text.split('\n').length + 3) : 4}" placeholder="What did you think? What will you remember? Who would you recommend it to?">${esc(text)}</textarea>
         ${draft != null && draft !== b.review ? `<p class="unsaved-note">Unsaved changes — they're kept until you save. <button class="link-btn" data-action="discard-review" data-id="${b.id}">Undo changes</button></p>` : ''}`; })()}
         <div class="voice-row">
-          ${micButton('#review-text', 'Speak your review')}
+          ${micButton('#review-text', 'Speak your review', 'note')}
           <button class="link-btn" data-action="tidy-review" data-id="${b.id}" title="${hasAI() ? 'Edit your spoken notes into clean prose with AI' : 'Basic clean-up (add a free AI key in Settings for a proper edit)'}">✦ Tidy${hasAI() ? ' with AI' : ''}</button>
           <span class="interim muted"></span>
         </div>
@@ -728,10 +728,11 @@ function viewSettings() {
 
     <section class="card section">
       <h2>AI assistant <span class="muted small">optional</span></h2>
-      <p class="muted small">Used for <b>Tidy with AI</b> (turns a rambling voice note into a clean review) and <b>Create a post</b> (captions and reel scripts). It uses Google's Gemini, which has a free tier: get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (sign in with Google, click <i>Create API key</i>), then paste it here.</p>
+      <p class="muted small">Used to tidy what you dictate (notes and reviews become clear sentences; passages read from a book only get punctuation), for <b>Tidy with AI</b> on reviews and <b>Create a post</b> (captions and reel scripts). It uses Google's Gemini, which has a free tier: get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (sign in with Google, click <i>Create API key</i>), then paste it here.</p>
       <p class="muted small">The key is stored only in this browser and is never included in backups. Text is sent to Google only when you press an AI button. On the free tier, Google may use what you send to improve its products — don't send anything private.</p>
       <form class="form" data-form="ai">
         <label>Gemini API key <input name="geminiKey" type="password" autocomplete="off" value="${esc(s.geminiKey || '')}" placeholder="AIza…"></label>
+        <label class="check"><input type="checkbox" name="autoTidy" ${s.autoTidy !== false ? 'checked' : ''}> Tidy dictation automatically when I stop speaking</label>
         <label>Model <input name="geminiModel" value="${esc(s.geminiModel || '')}" placeholder="${DEFAULT_MODEL} (picked automatically if retired)"></label>
         <div class="row gap wrap">
           <button class="btn primary">Save key</button>
@@ -839,16 +840,22 @@ function viewTimer() {
 // Uses the browser's built-in speech recognition (Chrome, Edge, Safari, Android). Free, no key needed.
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
-function micButton(target, label = 'Dictate') {
+function micButton(target, label = 'Dictate', mode = 'note') {
   if (!SpeechRec) return '';
-  return `<button type="button" class="link-btn mic" data-action="dictate" data-target="${target}"><span class="mic-dot"></span>${label}</button>`;
+  return `<button type="button" class="link-btn mic" data-action="dictate" data-target="${target}" data-mode="${mode}"><span class="mic-dot"></span>${label}</button>`;
 }
+const joinText = (before, added) => before + (before && !/\s$/.test(before) ? ' ' : '') + added;
+let lastTidy = null; // so "Undo" can put back exactly what was said
+
 function toggleDictation(btn) {
   if (rec) { rec.stop(); return; }
-  const target = $(btn.dataset.target, btn.closest('dialog') || document);
+  const scope = btn.closest('dialog') || document;
+  const target = $(btn.dataset.target, scope);
   if (!target) return;
-  const interim = btn.parentElement.querySelector('.interim');
+  const status = btn.parentElement.querySelector('.interim');
   const label = btn.innerHTML;
+  const before = target.value;   // what was already in the box
+  let spoken = '';               // only what's said this time gets tidied
   rec = new SpeechRec();
   rec.lang = navigator.language || 'en-US';
   rec.continuous = true;
@@ -857,18 +864,37 @@ function toggleDictation(btn) {
     let live = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const r = ev.results[i];
-      if (r.isFinal) {
-        const txt = r[0].transcript.trim();
-        target.value = (target.value && !/\s$/.test(target.value) ? target.value + ' ' : target.value) + txt;
-      } else live += r[0].transcript;
+      if (r.isFinal) { spoken = joinText(spoken, r[0].transcript.trim()); target.value = joinText(before, spoken); }
+      else live += r[0].transcript;
     }
-    if (interim) interim.textContent = live;
+    if (status) status.textContent = live;
   };
   rec.onerror = (ev) => { if (ev.error === 'not-allowed') toast('Microphone permission was blocked'); };
-  rec.onend = () => { rec = null; btn.classList.remove('on'); btn.innerHTML = label; if (interim) interim.textContent = ''; target.dispatchEvent(new Event('input')); };
+  rec.onend = () => {
+    rec = null; btn.classList.remove('on'); btn.innerHTML = label;
+    if (status) status.textContent = '';
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    if (spoken.trim() && db.settings.autoTidy !== false) tidyAfterDictation(target, before, spoken, btn.dataset.mode || 'note', status);
+  };
   rec.start();
   btn.classList.add('on');
   btn.innerHTML = '<span class="mic-dot"></span>Listening… tap to stop';
+}
+
+async function tidyAfterDictation(target, before, spoken, mode, status) {
+  const form = target.closest('form');
+  const bookId = form?.bookId?.value || target.dataset.book || '';
+  const bookTitle = getBook(bookId)?.title || '';
+  if (status) status.textContent = mode === 'passage' ? 'Adding punctuation…' : 'Tidying…';
+  const { text, via } = await tidyDictation(spoken, mode, bookTitle);
+  // If you kept typing meanwhile, don't overwrite anything.
+  if (target.value !== joinText(before, spoken) || !text) { if (status) status.textContent = ''; return; }
+  target.value = joinText(before, text);
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  if (target.tagName === 'TEXTAREA') target.rows = Math.min(12, Math.max(target.rows, target.value.split('\n').length + 1, Math.ceil(target.value.length / 70) + 1));
+  lastTidy = { target, before, spoken, text };
+  const how = via === 'ai' ? 'Tidied with AI' : via === 'device' ? 'Tidied on this device' : mode === 'passage' ? 'Punctuation added' : 'Basic tidy';
+  if (status) status.innerHTML = `<span class="tidy-done">✓ ${how}</span> <button type="button" class="link-btn" data-action="undo-tidy">Undo</button>${via === 'basic' && !hasAI() && mode !== 'passage' && !target.closest('dialog') ? ' <a href="#/settings" class="small">Better tidying →</a>' : ''}`;
 }
 
 // ============ TIDY A REVIEW ============
@@ -1097,7 +1123,7 @@ function itemForm(item = {}, presetBook = '', opts = {}) {
         <label>Text
           <textarea name="text" rows="5" ${isWord ? '' : 'required autofocus'} placeholder="Type, paste or dictate the passage…">${esc(isWord ? '' : item.text || '')}</textarea>
         </label>
-        ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Dictate passage')}${micButton('[name=note]', 'Dictate note')}<span class="interim muted"></span></div>` : ''}
+        ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Read a passage aloud', 'passage')}${micButton('[name=note]', 'Dictate note', 'note')}<span class="interim muted"></span></div>` : ''}
         <label>My note (optional)
           <textarea name="note" rows="2" placeholder="Why it mattered, what it reminds you of…">${esc(isWord ? '' : item.note || '')}</textarea>
         </label>
@@ -1116,7 +1142,7 @@ function itemForm(item = {}, presetBook = '', opts = {}) {
         <label><span>The sentence you found it in <span class="optional">optional</span></span>
           <textarea name="context" rows="3" placeholder="Copy the line from the book — seeing the word in use helps it stick">${esc(item.context || '')}</textarea>
         </label>
-        ${SpeechRec ? `<div class="voice-row">${micButton('[name=context]', 'Dictate the sentence')}<span class="interim muted"></span></div>` : ''}
+        ${SpeechRec ? `<div class="voice-row">${micButton('[name=context]', 'Read the sentence aloud', 'passage')}<span class="interim muted"></span></div>` : ''}
       </div>
 
       <div class="row gap">
@@ -1375,6 +1401,15 @@ document.addEventListener('click', async (e) => {
       if (confirm('Discard this reading session without logging it?')) { db.timer = null; save(); }
       break;
     case 'dictate': toggleDictation(el); break;
+    case 'undo-tidy': {
+      const t = lastTidy;
+      if (t && t.target.isConnected && t.target.value === joinText(t.before, t.text)) {
+        t.target.value = joinText(t.before, t.spoken);
+        t.target.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      lastTidy = null; el.parentElement.textContent = '';
+      break;
+    }
     case 'tidy-review': tidyFlow(getBook(id), el); break;
     case 'social': socialModal(getBook(id)); break;
     case 'year-card': yearModal(); break;
@@ -1524,6 +1559,7 @@ document.addEventListener('submit', (e) => {
   } else if (type === 'ai') {
     db.settings.geminiKey = fd.geminiKey.trim();
     db.settings.geminiModel = fd.geminiModel.trim();
+    db.settings.autoTidy = !!fd.autoTidy;
     save(); toast(db.settings.geminiKey ? 'Key saved — press “Test it” to check it' : 'Key cleared');
   }
 });

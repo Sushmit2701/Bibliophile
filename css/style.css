@@ -597,3 +597,5 @@ dialog { max-width: calc(100vw - 1rem); overflow-x: hidden; }
 dialog.nudge { animation: nudge .38s ease; }
 .draft-note { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; padding: .6rem .9rem; background: var(--gold-soft); color: var(--text); font: italic .95rem var(--serif); border-radius: 2px; }
 .unsaved-note { font: italic .9rem var(--serif); color: var(--accent); margin: -.4rem 0 .8rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.tidy-done { font: italic .95rem var(--serif); color: var(--text-soft); margin-right: .5rem; }
+.interim .link-btn { margin-left: .2rem; }

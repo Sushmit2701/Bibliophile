@@ -34,7 +34,7 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - The timer is based on timestamps, so it keeps counting if you lock your phone or close the app. **Finish & log** fills in the minutes and asks which page you reached.
 
 **Voice, AI and sharing**
-- **Dictate** reviews, passages and notes using your browser's built-in speech recognition. It's free and needs no key.
+- **Dictate** reviews, passages and notes using your browser's built-in speech recognition. It's free and needs no key. When you stop speaking, what you said is **tidied automatically**: notes and reviews become clear sentences (fillers and false starts removed, nothing added), and a passage read aloud from a book only gets punctuation, so its words stay exact. **Undo** brings back exactly what you said. The tidying uses AI if you've added a key, otherwise Chrome's built-in on-device AI where available, otherwise a basic offline clean-up that understands spoken "comma", "full stop", "question mark" and "new line". You can switch this off in Settings.
 - **✦ Tidy** turns a rambling voice note into a clean review and shows it next to your original before replacing anything. Without AI it does a basic clean-up (removes filler words and fixes capitals).
 - **Create a post** turns a book's saved quotes, review and rating into an Instagram/Threads **caption** or a timed **reel script** (on-screen text, voiceover, music mood, hashtags). The templates are free and work offline; *Write with AI* makes richer drafts.
 - **Share my year** (Stats page) makes a 1080×1920 story image: books, pages, hours, covers, favourite read and line of the year. It comes in three styles.

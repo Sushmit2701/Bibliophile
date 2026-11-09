@@ -61,17 +61,82 @@ export async function testKey(key) {
 }
 
 // ---------- Voice-note tidying ----------
-const FILLERS = /\b(um+|uh+|erm+|uhm+|you know|i mean|kind of like|sort of like|like,)\s*/gi;
+const FILLERS = /\b(um+|uh+|erm+|uhm+|hmm+|you know|i mean|kind of like|sort of like|like,)\s*/gi;
 
-// No-AI cleanup: strip filler words, collapse repeats, capitalise sentences.
-export function tidyLocally(text) {
-  let t = ' ' + text.replace(FILLERS, '').replace(/\s+/g, ' ').trim() + ' ';
-  t = t.replace(/\b(\w+)( \1\b)+/gi, '$1'); // "the the" -> "the"
-  t = t.replace(/ i /g, ' I ').replace(/ i'(m|ve|d|ll) /g, " I'$1 ");
-  t = t.trim();
-  t = t.replace(/(^|[.!?]\s+)([a-z])/g, (m, a, b) => a + b.toUpperCase());
-  if (t && !/[.!?]$/.test(t)) t += '.';
+// Spoken punctuation ("comma", "full stop", "new line"…) → the real thing.
+const SPOKEN = [
+  [/\s*\b(new paragraph)\b\s*/gi, '\n\n'],
+  [/\s*\b(new line|next line)\b\s*/gi, '\n'],
+  [/\s*\b(full stop|full-stop)\b/gi, '.'],
+  [/\s*\bcomma\b/gi, ','],
+  [/\s*\bquestion mark\b/gi, '?'],
+  [/\s*\b(exclamation mark|exclamation point)\b/gi, '!'],
+  [/\s*\bsemicolon\b/gi, ';'],
+  [/\s*\b(open quote|quote unquote)\b\s*/gi, ' “'],
+  [/\s*\b(close quote|end quote|unquote)\b/gi, '”'],
+];
+
+// No-AI cleanup. For a passage read from a book only punctuation and capitals change;
+// for your own notes, filler words and stutters are removed too.
+export function tidyLocally(text, mode = 'note') {
+  let t = text;
+  for (const [re, rep] of SPOKEN) t = t.replace(re, rep);
+  if (mode !== 'passage') t = t.replace(FILLERS, '');
+  t = t.split('\n').map((line) => {
+    let l = ' ' + line.replace(/[ \t]+/g, ' ').trim() + ' ';
+    if (mode !== 'passage') l = l.replace(/\b(\w+)( \1\b)+/gi, '$1'); // "the the" -> "the"
+    l = l.replace(/ i /g, ' I ').replace(/ i'(m|ve|d|ll) /g, " I'$1 ").replace(/\s+([,.;!?”])/g, '$1').trim();
+    l = l.replace(/(^|[.!?]\s+|“)([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    if (l && !/[.!?”:;,]$/.test(l)) l += '.';
+    return l;
+  }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return t;
+}
+
+// Chrome's built-in, on-device AI (free, no key) where the computer supports it.
+async function onDeviceAI(prompt) {
+  const LM = globalThis.LanguageModel;
+  if (!LM?.availability) return null;
+  try {
+    if ((await LM.availability()) !== 'available') return null; // never trigger a big model download from here
+    const session = await LM.create();
+    try {
+      const out = await Promise.race([session.prompt(prompt), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))]);
+      return String(out || '').trim() || null;
+    } finally { session.destroy?.(); }
+  } catch { return null; }
+}
+
+function dictationPrompt(text, mode, bookTitle) {
+  const book = bookTitle ? ` (the book is "${bookTitle}")` : '';
+  if (mode === 'passage') {
+    return `Below is a passage someone read aloud from a book${book}, captured by speech recognition, so it has no punctuation.
+Restore punctuation, capital letters, quotation marks and paragraph breaks.
+Do NOT add, remove, reorder or reword anything — it is a quotation. Only fix obvious mis-heard words, and turn spoken commands like "comma" or "new line" into punctuation.
+Return only the passage.
+
+"""${text}"""`;
+  }
+  return `Below is a note a reader dictated${book}, captured by speech recognition, so it has no punctuation and may ramble.
+Turn it into clear, readable written notes:
+- keep every idea and keep their meaning, voice and first person; do not add ideas, facts, opinions or praise,
+- remove filler words, false starts and repetition; fix grammar and punctuation,
+- use short paragraphs; turn spoken commands like "comma" or "new line" into punctuation,
+- no headings, no preamble.
+Return only the tidied note.
+
+"""${text}"""`;
+}
+
+// Returns { text, via } — via is 'ai' (Gemini), 'device' (Chrome on-device) or 'basic'.
+export async function tidyDictation(text, mode = 'note', bookTitle = '') {
+  const prompt = dictationPrompt(text, mode, bookTitle);
+  if (hasAI()) {
+    try { return { text: (await ask(prompt)).replace(/^"+|"+$/g, '').trim(), via: 'ai' }; } catch { /* fall through */ }
+  }
+  const local = await onDeviceAI(prompt);
+  if (local) return { text: local.replace(/^"+|"+$/g, '').trim(), via: 'device' };
+  return { text: tidyLocally(text, mode), via: 'basic' };
 }
 
 export async function tidyReview(text, book) {
