@@ -142,7 +142,7 @@ export function upsertItem(data) {
     Object.assign(item, data, { updatedAt: now });
   } else {
     item = {
-      id: uid(), bookId: '', source: '', kind: 'highlight', text: '', note: '',
+      id: uid(), bookId: '', source: '', kind: 'highlight', text: '', note: '', context: '',
       page: '', chapter: '', tags: [], favorite: false,
       rv: { due: today(), interval: 0, seen: 0, archived: false },
       createdAt: now, updatedAt: now, ...data,

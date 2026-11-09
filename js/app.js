@@ -278,12 +278,12 @@ function itemCard(i, opts = {}) {
     : i.source ? esc(i.source) : '';
   const meta = [i.page && (/^\d/.test(i.page) ? `p. ${esc(i.page)}` : esc(i.page)), i.chapter && esc(i.chapter)].filter(Boolean).join(' · ');
   const body = i.kind === 'word'
-    ? `<div class="word"><strong>${esc(i.text)}</strong>${i.note ? `<div class="definition">${nl2br(i.note)}</div>` : ''}</div>`
+    ? `<div class="word"><strong>${esc(i.text)}</strong>${i.note && !opts.hideMeaning ? `<div class="definition">${nl2br(i.note)}</div>` : ''}${i.context ? `<blockquote class="word-context">${contextWithWord(i.context, i.text)}</blockquote>` : ''}</div>`
     : `<blockquote class="${opts.big ? 'big' : ''}">${nl2br(i.text)}</blockquote>${i.note ? `<div class="note"><span class="note-label">My note</span>${nl2br(i.note)}</div>` : ''}`;
   return `
     <article class="item kind-${i.kind}" data-id="${i.id}">
       <div class="item-top">
-        <span class="kind-badge" title="${kind.label}">${kind.label}</span>
+        <span class="kind-badge" title="${kind.label}">${i.kind === 'word' ? 'Vocabulary' : kind.label}</span>
         ${meta ? `<span class="muted small">${meta}</span>` : ''}
       </div>
       ${body}
@@ -293,7 +293,7 @@ function itemCard(i, opts = {}) {
       <div class="item-actions">
         <button class="icon-btn ${i.favorite ? 'fav' : ''}" data-action="fav" data-id="${i.id}" title="Favorite">${i.favorite ? '♥' : '♡'}</button>
         <button class="icon-btn" data-action="copy" data-id="${i.id}" title="Copy">⧉</button>
-        ${i.kind !== 'word' ? `<button class="icon-btn" data-action="card" data-id="${i.id}" title="Share as image">▣</button>` : ''}
+        ${i.kind !== 'word' ? `<button class="icon-btn word-btn" data-action="word-from" data-id="${i.id}" title="Save a word from this passage (select it first)">+ Word</button><button class="icon-btn" data-action="card" data-id="${i.id}" title="Share as image">▣</button>` : ''}
         <button class="icon-btn" data-action="edit-item" data-id="${i.id}" title="Edit">✎</button>
         <button class="icon-btn" data-action="delete-item" data-id="${i.id}" title="Delete">🗑</button>
       </div>`}
@@ -440,7 +440,7 @@ function viewNotes() {
     if (ui.nBook && ui.nBook !== '_none' && i.bookId !== ui.nBook) return false;
     if (q) {
       const b = getBook(i.bookId);
-      const hay = `${i.text} ${i.note} ${i.source} ${(i.tags || []).join(' ')} ${b ? b.title + ' ' + b.author : ''}`.toLowerCase();
+      const hay = `${i.text} ${i.note} ${i.context || ''} ${i.source} ${(i.tags || []).join(' ')} ${b ? b.title + ' ' + b.author : ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -509,10 +509,10 @@ function viewReview() {
     <div class="review-stage">
       ${isWord && !ui.revealed ? `
         <article class="item kind-word review-card">
-          <div class="item-top"><span class="kind-badge">Aa Word</span></div>
-          <div class="word"><strong>${esc(item.text)}</strong></div>
+          <div class="item-top"><span class="kind-badge">Vocabulary</span></div>
+          <div class="word"><strong>${esc(item.text)}</strong>${item.context ? `<blockquote class="word-context">${contextWithWord(item.context, item.text)}</blockquote>` : ''}</div>
           <p class="muted">Do you remember what it means?</p>
-          <button class="btn" data-action="reveal">Show definition</button>
+          <button class="btn" data-action="reveal">Show meaning</button>
         </article>`
         : `<div class="review-card">${itemCard(item, { big: true, noActions: true })}</div>`}
       <div class="review-buttons">
@@ -602,7 +602,7 @@ function viewStats() {
       </section>` : ''}
       <section class="card">
         <h2>What you save</h2>
-        ${Object.keys(kinds).length ? `<ol class="rank plain">${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li>${KINDS[k]?.icon || ''} ${KINDS[k]?.label || k}s <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
+        ${Object.keys(kinds).length ? `<ol class="rank plain">${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li>${KINDS[k]?.label || k}s <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
       </section>
     </div>
   `;
@@ -994,20 +994,42 @@ function itemForm(item = {}, presetBook = '') {
   const bookId = item.bookId ?? presetBook;
   const books = db.books.slice().sort((a, b) => (b.status === 'reading') - (a.status === 'reading') || a.title.localeCompare(b.title));
   const kind = item.kind || 'highlight';
+  const isWord = kind === 'word';
+  const heading = (k, isNewItem) => (isNewItem ? (k === 'word' ? 'Save a word' : 'Save a passage') : 'Edit');
   openModal(`
-    <h2>${isNew ? 'Save a passage' : 'Edit'}</h2>
+    <h2 class="item-heading">${heading(kind, isNew)}</h2>
     <form class="form" data-form="item">
       <input type="hidden" name="id" value="${esc(item.id || '')}">
       <div class="kind-picker">
-        ${Object.entries(KINDS).map(([k, v]) => `<label><input type="radio" name="kind" value="${k}" ${kind === k ? 'checked' : ''}><span>${v.icon} ${v.label}</span></label>`).join('')}
+        ${Object.entries(KINDS).map(([k, v]) => `<label><input type="radio" name="kind" value="${k}" ${kind === k ? 'checked' : ''}><span>${v.label}</span></label>`).join('')}
       </div>
-      <label><span class="text-label">${kind === 'word' ? 'Word' : 'Text'}</span>
-        <textarea name="text" rows="5" required autofocus placeholder="Type, paste or dictate the passage…">${esc(item.text || '')}</textarea>
-      </label>
-      ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Dictate passage')}${micButton('[name=note]', 'Dictate note')}<span class="interim muted"></span></div>` : ''}
-      <label><span class="note-label-text">${kind === 'word' ? 'Definition' : 'My note (optional)'}</span>
-        <textarea name="note" rows="2" placeholder="Why it mattered, what it reminds you of…">${esc(item.note || '')}</textarea>
-      </label>
+
+      <div class="passage-fields" ${isWord ? 'hidden' : ''}>
+        <label>Text
+          <textarea name="text" rows="5" ${isWord ? '' : 'required autofocus'} placeholder="Type, paste or dictate the passage…">${esc(isWord ? '' : item.text || '')}</textarea>
+        </label>
+        ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Dictate passage')}${micButton('[name=note]', 'Dictate note')}<span class="interim muted"></span></div>` : ''}
+        <label>My note (optional)
+          <textarea name="note" rows="2" placeholder="Why it mattered, what it reminds you of…">${esc(isWord ? '' : item.note || '')}</textarea>
+        </label>
+      </div>
+
+      <div class="word-fields" ${isWord ? '' : 'hidden'}>
+        <label>Word
+          <div class="row gap center-v">
+            <input name="word" class="word-input" ${isWord ? 'required autofocus' : ''} autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(isWord ? item.text || '' : '')}" placeholder="e.g. dereliction">
+            <button type="button" class="btn sm" data-action="lookup-word">Look up</button>
+          </div>
+        </label>
+        <label>Meaning
+          <textarea name="meaning" rows="3" placeholder="In your own words, or tap Look up">${esc(isWord ? item.note || '' : '')}</textarea>
+        </label>
+        <label><span>The sentence you found it in <span class="optional">optional</span></span>
+          <textarea name="context" rows="3" placeholder="Copy the line from the book — seeing the word in use helps it stick">${esc(item.context || '')}</textarea>
+        </label>
+        ${SpeechRec ? `<div class="voice-row">${micButton('[name=context]', 'Dictate the sentence')}<span class="interim muted"></span></div>` : ''}
+      </div>
+
       <div class="row gap">
         <label class="grow">From book
           <select name="bookId">
@@ -1023,7 +1045,7 @@ function itemForm(item = {}, presetBook = '') {
       </div>
       <label>Tags <input name="tags" value="${esc((item.tags || []).join(', '))}" placeholder="love, stoicism, to-share" list="tag-list"></label>
       <datalist id="tag-list">${allTags().map(([t]) => `<option value="${esc(t)}">`).join('')}</datalist>
-      <label class="check"><input type="checkbox" name="favorite" ${item.favorite ? 'checked' : ''}> ♥ Favorite</label>
+      <label class="check"><input type="checkbox" name="favorite" ${item.favorite ? 'checked' : ''}> ♥ Favourite</label>
       <div class="row gap end">
         <button type="button" class="btn ghost" data-action="close">Cancel</button>
         ${isNew ? '<button class="btn" name="again" value="1">Save & add another</button>' : ''}
@@ -1032,14 +1054,53 @@ function itemForm(item = {}, presetBook = '') {
     </form>`, (root) => {
     const f = $('form', root);
     f.bookId.addEventListener('change', () => { $('.source-field', root).hidden = !!f.bookId.value; });
+    // Switching between "Word" and the passage types swaps the fields (and what's required).
     $$('input[name=kind]', root).forEach((r) => r.addEventListener('change', () => {
       const w = f.kind.value === 'word';
-      $('.text-label', root).textContent = w ? 'Word' : 'Text';
-      $('.note-label-text', root).textContent = w ? 'Definition' : 'My note (optional)';
-      f.text.rows = w ? 1 : 5;
+      $('.passage-fields', root).hidden = w;
+      $('.word-fields', root).hidden = !w;
+      f.text.required = !w; f.word.required = w;
+      $('.item-heading', root).textContent = heading(f.kind.value, isNew);
+      // carry what was typed across, so switching doesn't lose it
+      if (w && !f.word.value && f.text.value.trim() && !/\s/.test(f.text.value.trim())) { f.word.value = f.text.value.trim(); f.text.value = ''; }
+      else if (w && !f.context.value && /\s/.test(f.text.value.trim())) { f.context.value = f.text.value.trim(); f.text.value = ''; }
+      (w ? f.word : f.text).focus();
     }));
-    if (kind === 'word') f.text.rows = 1;
   });
+}
+
+// Free dictionary (dictionaryapi.dev, English). Fills the meaning field; you can edit it.
+async function lookupWord(btn) {
+  const f = btn.closest('form');
+  const word = f.word.value.trim().toLowerCase();
+  if (!word) { toast('Type the word first'); f.word.focus(); return; }
+  btn.disabled = true; btn.textContent = 'Looking…';
+  try {
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+    if (res.status === 404) { toast(`No dictionary entry for “${word}” — add the meaning yourself`); return; }
+    if (!res.ok) throw new Error(res.status);
+    const entries = await res.json();
+    const lines = [];
+    for (const e of entries) for (const m of e.meanings || []) {
+      const d = m.definitions?.[0]?.definition;
+      if (d && lines.length < 3 && !lines.some((l) => l.endsWith(d))) lines.push(`(${m.partOfSpeech}) ${d}`);
+    }
+    if (!lines.length) { toast('No definition found'); return; }
+    f.meaning.value = lines.join('\n');
+  } catch {
+    toast('Dictionary unavailable right now — add the meaning yourself');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Look up';
+  }
+}
+
+// Show a sentence with the saved word picked out (matches "abandon" in "abandoned" too).
+function contextWithWord(context, word) {
+  const html = nl2br(context);
+  const stem = word.trim().toLowerCase().replace(/(ing|ed|es|s|ly)$/, '');
+  if (stem.length < 3) return html;
+  const re = new RegExp(`\\b(${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\w’']*)`, 'gi');
+  return html.replace(re, '<mark>$1</mark>');
 }
 
 function sessionForm(book, prefill = {}) {
@@ -1087,6 +1148,9 @@ async function showCard(item, theme = 0) {
 }
 
 // ============ EVENTS ============
+
+document.addEventListener('mousedown', () => { ui.lastSelection = String(window.getSelection?.() || ''); }, true);
+document.addEventListener('touchstart', () => { ui.lastSelection = String(window.getSelection?.() || ''); }, { capture: true, passive: true });
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-action]');
@@ -1232,6 +1296,21 @@ document.addEventListener('click', async (e) => {
     case 'remove-ai':
       if (confirm('Remove your AI key from this device?')) { db.settings.geminiKey = ''; save(); toast('Key removed'); }
       break;
+    case 'lookup-word': lookupWord(el); break;
+    case 'word-from': {
+      const src = getItem(id);
+      const picked = (ui.lastSelection || '').trim();
+      const word = picked && !/\s/.test(picked) && src.text.toLowerCase().includes(picked.toLowerCase()) ? picked.replace(/^[^\w]+|[^\w]+$/g, '') : '';
+      // Use just the sentence containing the word, not the whole passage, when we can find it.
+      let context = src.text;
+      if (word) {
+        const sentence = src.text.split(/(?<=[.!?…])\s+/).find((s) => s.toLowerCase().includes(word.toLowerCase()));
+        if (sentence) context = sentence;
+      }
+      itemForm({ kind: 'word', text: word, context, bookId: src.bookId, source: src.source, page: src.page, chapter: src.chapter });
+      if (!word) toast('Tip: select the word in the passage first, then tap + Word');
+      break;
+    }
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
     case 'review':
@@ -1321,8 +1400,13 @@ document.addEventListener('submit', (e) => {
     else ensureCover(b, { force: !!fd.id && data.cover !== before });
     if (!fd.id) { location.hash = `#/book/${b.id}`; toast('Book added'); }
   } else if (type === 'item') {
+    const isWord = fd.kind === 'word';
     const data = {
-      kind: fd.kind, text: fd.text.trim(), note: fd.note.trim(), bookId: fd.bookId, source: fd.bookId ? '' : fd.source.trim(),
+      kind: fd.kind,
+      text: (isWord ? fd.word : fd.text).trim(),
+      note: (isWord ? fd.meaning : fd.note).trim(),
+      context: isWord ? fd.context.trim() : '',
+      bookId: fd.bookId, source: fd.bookId ? '' : fd.source.trim(),
       page: fd.page.trim(), chapter: fd.chapter.trim(), tags: parseTags(fd.tags), favorite: !!fd.favorite,
     };
     if (fd.id) data.id = fd.id;

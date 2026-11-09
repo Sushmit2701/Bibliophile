@@ -575,3 +575,19 @@ dialog::backdrop { background: rgba(18, 12, 6, .45); backdrop-filter: blur(3px);
 .cover-col { display: flex; flex-direction: column; align-items: center; gap: .9rem; flex-shrink: 0; }
 .form-hint { margin: -.4rem 0 0; font-style: italic; }
 .form label input[type=file] { padding: .45rem .6rem; font-size: .82rem; }
+
+/* vocabulary */
+.word-input { font: 500 1.35rem var(--display); }
+.form .optional { text-transform: none; letter-spacing: 0; font: italic .85rem var(--serif); color: var(--muted); margin-left: .3rem; }
+blockquote.word-context { font: italic 1rem/1.6 var(--serif); color: var(--text-soft); margin: .8rem 0 .2rem; padding-left: .9rem; border-left: 2px solid var(--gold-soft); }
+.review-card blockquote.word-context { text-align: left; font-size: 1.15rem; max-width: 560px; margin: 1.2rem auto .4rem; }
+mark { background: linear-gradient(transparent 55%, var(--gold-soft) 55%); color: var(--text); font-style: normal; font-weight: 500; padding: 0 .05em; }
+.word-btn { font: 600 .62rem var(--sans); text-transform: uppercase; letter-spacing: .12em; }
+.word-fields { display: grid; gap: 1.1rem; }
+.word-fields[hidden], .passage-fields[hidden] { display: none; }
+.passage-fields { display: grid; gap: 1.1rem; }
+/* keep forms inside the dialog on narrow screens */
+.form, .word-fields, .passage-fields { grid-template-columns: minmax(0, 1fr); }
+.form .row > * { min-width: 0; }
+.form select { max-width: 100%; text-overflow: ellipsis; }
+dialog { max-width: calc(100vw - 1rem); overflow-x: hidden; }

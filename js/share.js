@@ -87,7 +87,7 @@ export function bookMarkdown(book) {
   for (const [kind, list] of Object.entries(groups)) {
     lines.push('', `## ${KINDS[kind]?.label || kind}s`, '');
     for (const i of list) {
-      if (kind === 'word') lines.push(`- **${i.text}**${i.note ? ' — ' + i.note : ''}`);
+      if (kind === 'word') lines.push(`- **${i.text}**${i.note ? ' — ' + i.note : ''}${i.context ? `\n  > ${i.context.replace(/\n/g, ' ')}${i.page ? ` (p. ${i.page})` : ''}` : ''}`);
       else {
         lines.push(i.text.split('\n').map((l) => '> ' + l).join('\n'));
         const meta = [i.page && (/^\d/.test(i.page) ? `p. ${i.page}` : i.page), i.chapter, i.favorite && '♥'].filter(Boolean).join(' · ');

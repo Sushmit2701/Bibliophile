@@ -16,7 +16,8 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - **Reviews** for each book, with writing prompts. When you finish a book, the app asks you to write a few lines while it's fresh.
 
 **Highlights & notes** (the "Notebook")
-- Save more than highlights: **quotes, notes, ideas, questions and vocabulary words** (a word with its definition)
+- Save more than highlights: **quotes, notes, ideas and questions**
+- **Vocabulary:** save a word with its meaning (tap *Look up* for a free dictionary definition, English only) and the sentence you found it in. Select a word inside a saved passage and tap **+ Word** to save it with that sentence, book and page filled in. In daily review, words come back as flashcards: you see the word in its sentence and try to recall the meaning.
 - Each one can have a page or location, chapter, tags, a personal note and a ♥ favourite mark
 - Save quotes that aren't from a book (a person, a podcast, an article, a film)
 - Full-text search and filters by type, book, tag and favourites
