@@ -8,6 +8,7 @@ import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
 import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate, reelTemplate, aiCaption, aiReel, aiUsage, resetTimeLocal } from './ai.js';
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
+import * as Recs from './recs.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
   useUploadedCover, removeCover, clearCovers, exportCovers, importCovers,
@@ -77,12 +78,21 @@ function hashHue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0
 
 // Cloth-bound colours for books without a cover image: oxblood, bottle green, navy, plum, tobacco, slate, rust, ink.
 const CLOTH = ["#5a1a1f", "#1f3a2f", "#1d2a44", "#3f2440", "#5b3b1c", "#2c3b40", "#6b2a1a", "#22262e"];
+window.coverFail = (img) => {
+  const alts = (img.dataset.alt || '').split('|').filter(Boolean);
+  if (!alts.length) return img.remove();
+  img.dataset.alt = alts.slice(1).join('|');
+  img.src = alts[0];
+};
 function cover(book, size = '') {
   const cloth = CLOTH[hashHue(book.title || "?") % CLOTH.length];
   const fallback = `<div class="cover-fallback" style="--cloth:${cloth}"><span>${esc(book.title)}</span><small>${esc(book.author)}</small></div>`;
   const src = coverSrc(book);
   if (!src) return `<div class="cover ${size}">${fallback}</div>`;
-  return `<div class="cover ${size}"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()">${fallback}</div>`;
+  // If an image fails, try the next way to get it (relay, then other editions) before showing the cloth cover.
+  const relay = (u) => (/covers\.openlibrary\.org/.test(u) ? `https://wsrv.nl/?url=${encodeURIComponent(u)}&w=400&we` : '');
+  const alts = /^blob:/.test(src) ? [] : [relay(src), ...(book.coverAlt || []).flatMap((u) => [u, relay(u)])].filter(Boolean);
+  return `<div class="cover ${size}"><img src="${esc(src)}" alt="" loading="lazy" data-alt="${esc(alts.join('|'))}" onerror="coverFail(this)">${fallback}</div>`;
 }
 
 let toastTimer;
@@ -208,6 +218,7 @@ const routes = {
   review: viewReview,
   stats: viewStats,
   timer: viewTimer,
+  foryou: viewForYou,
   settings: viewSettings,
 };
 const ui = { // transient UI state that survives re-renders
@@ -296,6 +307,8 @@ function viewHome() {
         <button class="btn" data-action="add-book">Add a book</button>
       </div>
     </div>
+
+    ${homePicks()}
 
     <section class="section">
       <div class="section-head"><h2>On the nightstand</h2><a href="#/library" class="more">The library →</a></div>
@@ -1023,6 +1036,125 @@ async function yearModal() {
   });
 }
 
+// ============ FOR YOU (recommendations) ============
+// Everything is worked out on this device from your own library; the only thing sent anywhere is
+// book searches to Open Library. No AI, no key, no limits.
+Object.assign(ui, { recFilter: 'all', recData: null, recLoading: false, recProgress: '', recError: '', recAsk: {}, recRemoved: {}, recAdded: {}, recOpen: new Set() });
+
+function startRecs(force = false) {
+  if (ui.recLoading) return;
+  ui.recLoading = true; ui.recError = ''; ui.recProgress = 'Starting…';
+  if (force) ui.recData = null;
+  if (location.hash.startsWith('#/foryou')) render();
+  Recs.buildRecommendations((msg) => {
+    ui.recProgress = msg;
+    const el = $('.rec-progress'); if (el) el.textContent = msg;
+  }).then((d) => { ui.recData = d; ui.recRemoved = {}; ui.recAsk = {}; })
+    .catch((e) => { ui.recError = e.message || 'Something went wrong'; })
+    .finally(() => { ui.recLoading = false; if (location.hash.startsWith('#/foryou') || location.hash === '#/' || location.hash === '') render(); });
+}
+const recCard = (key) => { for (const s of ui.recData?.sections || []) { const c = s.items.find((x) => x.key === key); if (c) return c; } return null; };
+const recCover = (c) => {
+  const byId = c.cover ? `https://covers.openlibrary.org/b/id/${c.cover}-M.jpg` : '';
+  const english = c.enIsbn ? `https://covers.openlibrary.org/b/isbn/${c.enIsbn}-M.jpg?default=false` : '';
+  return { id: 'rec:' + c.key, title: c.title, author: c.author, cover: english || byId, coverAlt: english && byId ? [byId] : [] };
+};
+const recFilterOk = (c) => ui.recFilter === 'all' || (ui.recFilter === 'fiction' && c.fiction) || (ui.recFilter === 'nonfiction' && !c.fiction) || (ui.recFilter === 'short' && c.pages && c.pages < 300);
+
+function viewForYou() {
+  if (!ui.recData) ui.recData = Recs.cached();
+  const data = ui.recData;
+  if (!ui.recLoading && !ui.recError && Recs.isStale(data)) setTimeout(() => startRecs(), 0);
+  const head = `
+    <header class="page-head">
+      <div>
+        <div class="eyebrow">Recommendations</div>
+        <h1>For you</h1>
+      </div>
+      <button class="btn" data-action="rec-refresh" ${ui.recLoading ? 'disabled' : ''}>${ui.recLoading ? 'Updating…' : 'Refresh'}</button>
+    </header>
+    <p class="lede-sm">Picked from your ratings, what you finished or abandoned, and the themes in your reviews and notes — matched against how books are described and shelved by other readers on Open Library. It's free and works it out on this device; the more you rate and write, the better it gets.</p>`;
+  if (!db.books.length) return head + `<p class="empty">Add and rate a few books you've read — recommendations start from what you love.</p>`;
+  if (ui.recError && !data) return head + `<p class="empty">Couldn't reach Open Library (${esc(ui.recError)}). <a href="#" data-action="rec-refresh">Try again</a></p>`;
+  if (!data || (ui.recLoading && !data.sections?.length)) {
+    return head + `<div class="rec-loading"><div class="ornament">❦</div><p class="rec-progress">${esc(ui.recProgress || 'Reading your library…')}</p><p class="muted small">The first time takes a little longer — it looks up the subjects of each of your books once.</p></div>`;
+  }
+  if (!data.sections.length) {
+    return head + `<p class="empty">${data.ratedCount < 2 ? 'Rate a few books you’ve finished — especially ones you loved — and come back.' : 'No good matches yet. Try rating a few more books or writing a line or two of review.'}</p>`;
+  }
+  const filters = { all: 'All', fiction: 'Fiction', nonfiction: 'Non-fiction', short: 'Under 300 pages' };
+  return head + `
+    <div class="chips rec-filters">${Object.entries(filters).map(([k, v]) => `<button class="chip ${ui.recFilter === k ? 'on' : ''}" data-action="rec-filter" data-value="${k}">${v}</button>`).join('')}</div>
+    ${ui.recLoading ? `<p class="muted small rec-progress">${esc(ui.recProgress)}</p>` : ''}
+    ${data.sections.map((s) => {
+      const items = s.items.filter(recFilterOk);
+      if (!items.length) return '';
+      return `<section class="section rec-section">
+        <div class="section-head"><h2>${esc(s.title)}</h2></div>
+        <div class="rec-grid">${items.map(recCardHTML).join('')}</div>
+      </section>`;
+    }).join('')}
+    <p class="muted small rec-foot">Updated ${new Date(data.at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })} · refreshes daily and whenever your library changes · book data from <a href="https://openlibrary.org" target="_blank" rel="noopener">Open Library</a></p>`;
+}
+
+function recCardHTML(c) {
+  const removed = ui.recRemoved[c.key];
+  if (removed) {
+    return `<article class="rec-card removed"><p>Removed <i>${esc(c.title)}</i>${removed === 'genre' || removed === 'similar' ? ' — you’ll see fewer like it' : removed === 'long' ? ' — you’ll see fewer long books' : ''}.</p><button class="link-btn" data-action="rec-undo" data-key="${esc(c.key)}">Undo</button></article>`;
+  }
+  const added = ui.recAdded[c.key];
+  const book = added && getBook(added.id);
+  const meta = [c.year, c.pages ? `${c.pages} pages` : ''].filter(Boolean).join(' · ');
+  let actions;
+  if (book && added.status === 'want') actions = `<p class="rec-state">✓ On your Want to read shelf · <a href="#/book/${book.id}">Open</a></p>`;
+  else if (book) actions = `<div class="rec-state">Added to your library. How was it? ${stars(book.rating, book.id)}</div>`;
+  else if (ui.recAsk[c.key]) {
+    actions = `<div class="rec-why-not"><span class="muted small">What’s off?</span>
+      ${[['genre', 'Not my kind of book'], ['similar', 'Read enough like it'], ['long', 'Too long'], ['meh', 'Just not interested']].map(([k, v]) => `<button class="chip sm" data-action="rec-dismiss" data-key="${esc(c.key)}" data-reason="${k}">${v}</button>`).join('')}
+      <button class="link-btn" data-action="rec-cancel" data-key="${esc(c.key)}">Cancel</button></div>`;
+  } else {
+    actions = `<div class="rec-actions">
+      <button class="btn sm primary" data-action="rec-want" data-key="${esc(c.key)}">Want to read</button>
+      <button class="btn sm" data-action="rec-read" data-key="${esc(c.key)}">Already read</button>
+      <button class="link-btn" data-action="rec-no" data-key="${esc(c.key)}">Not for me</button></div>`;
+  }
+  return `<article class="rec-card">
+    <a href="https://openlibrary.org${esc(c.key)}" target="_blank" rel="noopener" class="rec-cover">${cover(recCover(c), 'md')}</a>
+    <div class="rec-body">
+      <h3>${esc(c.title)}</h3>
+      <p class="byline">${esc(c.author)}${meta ? ` <span class="muted small">· ${meta}</span>` : ''}</p>
+      <p class="rec-reason">${esc(c.reason)}</p>
+      ${c.readers ? `<p class="muted small rec-readers">${esc(c.readers)}</p>` : ''}
+      ${(() => { const open = ui.recOpen.has(c.key); const d = Recs.describedAlready(c.key); return `<details class="rec-about" data-key="${esc(c.key)}" ${open ? 'open' : ''} ${d != null ? 'data-loaded="1"' : ''}><summary>About this book</summary><div class="rec-desc muted">${d == null ? 'Loading…' : d ? nl2br(d.length > 900 ? d.slice(0, 900).replace(/\s+\S*$/, '') + '…' : d) : 'No description on Open Library.'}</div>`; })()}${c.tags?.length ? `<p class="rec-tags">${c.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')}</p>` : ''}</details>
+      ${actions}
+    </div>
+  </article>`;
+}
+
+function homePicks() {
+  const data = ui.recData || Recs.cached();
+  const first = data?.sections?.[0];
+  if (!first?.items?.length) return '';
+  const picks = first.items.filter((c) => !ui.recRemoved[c.key] && !ui.recAdded[c.key]).slice(0, 5);
+  if (!picks.length) return '';
+  return `<section class="section">
+    <div class="section-head"><h2>Picked for you</h2><a href="#/foryou" class="more">More →</a></div>
+    <div class="pick-row">${picks.map((c) => `<a href="#/foryou" class="pick-mini" title="${esc(c.reason)}">${cover(recCover(c))}<span class="shelf-title">${esc(c.title)}</span><span class="muted small">${esc(c.author)}</span></a>`).join('')}</div>
+  </section>`;
+}
+
+// Load a book's description the first time its "About this book" is opened.
+document.addEventListener('toggle', async (e) => {
+  const d = e.target;
+  if (!d.matches?.('.rec-about')) return;
+  d.open ? ui.recOpen.add(d.dataset.key) : ui.recOpen.delete(d.dataset.key);
+  if (!d.open || d.dataset.loaded) return;
+  d.dataset.loaded = '1';
+  const text = await Recs.describe(d.dataset.key);
+  const box = (d.isConnected ? d : document.querySelector(`.rec-about[data-key="${CSS.escape(d.dataset.key)}"]`))?.querySelector('.rec-desc');
+  if (box) box.innerHTML = text ? nl2br(text.length > 900 ? text.slice(0, 900).replace(/\s+\S*$/, '') + '…' : text) : 'No description on Open Library.';
+}, true);
+
 // ============ FORMS ============
 
 function bookForm(book = {}, opts = {}) {
@@ -1452,6 +1584,27 @@ document.addEventListener('click', async (e) => {
       }
       itemForm({ kind: 'word', text: word, context, bookId: src.bookId, source: src.source, page: src.page, chapter: src.chapter });
       if (!word) toast('Tip: select the word in the passage first, then tap + Word');
+      break;
+    }
+    case 'rec-refresh': startRecs(true); break;
+    case 'rec-filter': ui.recFilter = el.dataset.value; render(); break;
+    case 'rec-no': ui.recAsk[el.dataset.key] = true; render(); break;
+    case 'rec-cancel': delete ui.recAsk[el.dataset.key]; render(); break;
+    case 'rec-dismiss': {
+      const c = recCard(el.dataset.key); if (!c) break;
+      Recs.dismiss(c, el.dataset.reason); ui.recRemoved[c.key] = el.dataset.reason; delete ui.recAsk[c.key]; render();
+      break;
+    }
+    case 'rec-undo': Recs.undismiss(el.dataset.key); delete ui.recRemoved[el.dataset.key]; render(); break;
+    case 'rec-want':
+    case 'rec-read': {
+      const c = recCard(el.dataset.key); if (!c) break;
+      const status = a === 'rec-want' ? 'want' : 'finished';
+      const book = Recs.addToLibrary(c, status);
+      ui.recAdded[c.key] = { id: book.id, status };
+      ensureCover(book);
+      render();
+      toast(status === 'want' ? `Added “${c.title}” to Want to read` : `Added “${c.title}” — give it a rating`);
       break;
     }
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;

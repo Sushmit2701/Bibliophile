@@ -41,6 +41,13 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 
 **Optional AI (free):** create a Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it in **Settings → AI assistant**. The key stays in your browser and is never included in backups. Text is sent to Google only when you press an AI button, and on the free tier Google may use it to improve its products. If a model is retired, the app switches to a current one automatically.
 
+**For you — book recommendations (free, no AI, no key)**
+- A **For you** tab that learns your taste from your ratings (half stars included), what you finished or abandoned, how much you highlighted, your favourite authors, and the themes you keep writing about in reviews, notes and tags.
+- It matches those against how other readers and librarians have tagged and described books on [Open Library](https://openlibrary.org) (subjects like *grief*, *country homes*, *time travel*, *dystopias*), and how many readers have it on their shelves.
+- Sections: *Top picks*, *Because you loved [book]*, *Matches what you write about*, *From authors you rate highly* and *Something different*. Every pick says why it was chosen, and you can filter by fiction, non-fiction, or under 300 pages.
+- **Want to read** adds it to your shelf, **Already read** adds it and asks for a rating, and **Not for me** asks what's off (not your kind of book, read enough like it, too long, not interested) and shows fewer like it.
+- Children's and young-adult books are left out unless you read them. Everything is worked out on your device; the only thing sent anywhere is book searches to Open Library. It refreshes daily and whenever your library changes, and a few picks also appear on Home.
+
 **Stats**
 - Yearly reading goal, and whether you're ahead of or behind pace
 - Activity heatmap, books per year, pages read, average rating, most-read authors and most-highlighted books
