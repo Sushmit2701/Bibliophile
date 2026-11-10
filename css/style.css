@@ -1039,3 +1039,7 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 /* the sidebar spans the page and the sound panel row, so it stays put while scrolling */
 @media (min-width: 761px) { .nav { grid-row: 1 / span 2; } }
 .mix-name small { margin-bottom: .2rem; }
+
+.station.busy .st-play { box-shadow: var(--inset); }
+.spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--rule-strong); border-top-color: var(--accent-fill); animation: spin .8s linear infinite; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }

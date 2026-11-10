@@ -131,34 +131,112 @@ const calmPlaying = () => Object.keys(voices).length > 0 && master?.gain.value >
 // ==========================================================================
 // Radio — a few calm stations, plus the free Radio Browser directory
 // ==========================================================================
+// SomaFM runs several copies (mirrors) of every station and publishes the current list in a
+// playlist file; we read it so we always use live servers, and try the next one if one is busy.
+const SOMA = (id, name, tag) => ({
+  id, name, tag, by: 'SomaFM', pls: `https://api.somafm.com/${id}.pls`,
+  mirrors: ['ice6', 'ice2', 'ice5', 'ice4'].map((h) => `https://${h}.somafm.com/${id}-128-mp3`),
+});
 const STATIONS = [
-  { id: 'groovesalad', name: 'Groove Salad', tag: 'Ambient · downtempo', url: 'https://ice1.somafm.com/groovesalad-128-mp3', by: 'SomaFM' },
-  { id: 'dronezone', name: 'Drone Zone', tag: 'Atmospheric · no beats', url: 'https://ice1.somafm.com/dronezone-128-mp3', by: 'SomaFM' },
-  { id: 'fluid', name: 'Fluid', tag: 'Instrumental hip-hop · lo-fi', url: 'https://ice1.somafm.com/fluid-128-mp3', by: 'SomaFM' },
-  { id: 'sonicuniverse', name: 'Sonic Universe', tag: 'Jazz', url: 'https://ice1.somafm.com/sonicuniverse-128-mp3', by: 'SomaFM' },
-  { id: 'swissclassic', name: 'Radio Swiss Classic', tag: 'Classical · no talk', url: 'https://stream.srg-ssr.ch/m/rsc_de/mp3_128', by: 'SRG SSR' },
-  { id: 'swissjazz', name: 'Radio Swiss Jazz', tag: 'Jazz · no talk', url: 'https://stream.srg-ssr.ch/m/rsj/mp3_128', by: 'SRG SSR' },
+  SOMA('groovesalad', 'Groove Salad', 'Ambient · downtempo'),
+  SOMA('dronezone', 'Drone Zone', 'Atmospheric · no beats'),
+  SOMA('fluid', 'Fluid', 'Instrumental hip-hop · lo-fi'),
+  SOMA('sonicuniverse', 'Sonic Universe', 'Jazz'),
+  // The direct https address; the older one redirects to plain http, which browsers block on an https page.
+  { id: 'swissclassic', name: 'Radio Swiss Classic', tag: 'Classical · no talk', by: 'SRG SSR', mirrors: ['https://stream.srg-ssr.ch/srgssr/rsc_de/mp3/128'] },
+  { id: 'swissjazz', name: 'Radio Swiss Jazz', tag: 'Jazz · no talk', by: 'SRG SSR', mirrors: ['https://stream.srg-ssr.ch/srgssr/rsj/mp3/128'] },
 ];
+const plsCache = new Map();
+async function mirrorsOf(st) {
+  const fallback = st.mirrors || (st.url ? [st.url] : []);
+  if (!st.pls) return fallback;
+  const c = plsCache.get(st.id);
+  if (c && Date.now() - c.at < 6 * 3600e3) return c.urls;
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
+    const txt = await (await fetch(st.pls, { signal: ctl.signal })).text(); clearTimeout(t);
+    const listed = [...txt.matchAll(/^File\d+=(https:\/\/\S+)/gm)].map((m) => m[1].trim());
+    if (listed.length) { const urls = [...new Set([...listed, ...fallback])]; plsCache.set(st.id, { at: Date.now(), urls }); return urls; }
+  } catch { /* use the built-in list */ }
+  return fallback;
+}
+
 const radio = new Audio();
 radio.preload = 'none';
-let radioNow = null, radioError = '', fading = null;
+// idle | connecting | playing | reconnecting | paused | error
+let radioNow = null, radioState = 'idle', radioError = '', attempt = 0, watchdog = null, retries = 0, fading = null;
+const radioActive = () => ['connecting', 'playing', 'reconnecting'].includes(radioState);
 function fadeRadio(to, ms = 900) {
   clearInterval(fading);
   const from = radio.volume, steps = 18, target = Math.max(0, Math.min(1, to));
   let i = 0;
   return new Promise((res) => {
-    fading = setInterval(() => { i++; radio.volume = from + (target - from) * (i / steps); if (i >= steps) { clearInterval(fading); res(); } }, ms / steps);
+    fading = setInterval(() => { i++; try { radio.volume = from + (target - from) * (i / steps); } catch {} if (i >= steps) { clearInterval(fading); res(); } }, ms / steps);
   });
 }
-async function playStation(st) {
-  radioError = '';
-  if (radioNow?.url === st.url && !radio.paused) { await fadeRadio(0, 500); radio.pause(); radioNow = null; return; }
-  radioNow = st;
-  radio.src = st.url; radio.volume = 0;
-  try { await radio.play(); fadeRadio(S().radioVolume / 100); } catch { radioError = `Couldn't play ${st.name} right now.`; radioNow = null; }
-  S().lastStation = st; remember();
+function waitForPlaying(ms) {
+  return new Promise((resolve, reject) => {
+    const done = (ok, why) => { clearTimeout(t); radio.removeEventListener('playing', onPlay); radio.removeEventListener('error', onErr); ok ? resolve() : reject(new Error(why)); };
+    const onPlay = () => done(true);
+    const onErr = () => done(false, 'error');
+    const t = setTimeout(() => done(false, 'timeout'), ms);
+    radio.addEventListener('playing', onPlay); radio.addEventListener('error', onErr);
+  });
 }
-radio.addEventListener('error', () => { if (radioNow) { radioError = `${radioNow.name} isn't available right now.`; radioNow = null; render(); } });
+// Connect to a station, trying each server in turn. A newer tap always wins over an older attempt.
+async function connect(st, { reconnecting = false } = {}) {
+  const token = ++attempt;
+  clearTimeout(watchdog);
+  radioNow = st; radioError = '';
+  radioState = reconnecting ? 'reconnecting' : 'connecting'; render();
+  const urls = await mirrorsOf(st);
+  for (const url of urls) {
+    if (token !== attempt) return;                       // you tapped something else meanwhile
+    const playing = waitForPlaying(8000);
+    playing.catch(() => {});
+    try {
+      radio.src = url; radio.volume = 0; radio.load();
+      // Don't wait on play() itself: against a server that never answers it never settles.
+      // Whichever comes first wins — sound starting, an error, the 10-second cut-off, or the
+      // browser refusing to start audio without a tap.
+      const started = radio.play().then(() => null, (e) => e);
+      const blocked = started.then((e) => (e && e.name === 'NotAllowedError' ? e : new Promise(() => {})));
+      const result = await Promise.race([playing.then(() => null), blocked]);
+      if (token !== attempt) return;
+      if (result) { radioState = 'error'; radioError = 'Your browser needs a tap to start the radio — press ▶ again.'; radioNow = null; render(); return; }
+      if (token !== attempt) return;
+      radioState = 'playing'; retries = reconnecting ? retries : 0;
+      fadeRadio(S().radioVolume / 100);
+      render();
+      return;
+    } catch { /* this server didn't start in time — try the next one */ }
+  }
+  if (token !== attempt) return;
+  radio.removeAttribute('src'); radio.load();
+  radioNow = null; radioState = 'error';
+  radioError = `Couldn't reach ${st.name} — it may be busy. Try again in a moment, or pick another station.`;
+  render();
+}
+function stopRadio() {
+  ++attempt; clearTimeout(watchdog);
+  const was = radioActive();
+  radioNow = null; radioState = 'idle'; radioError = '';
+  const end = () => { radio.pause(); radio.removeAttribute('src'); radio.load(); };
+  was ? fadeRadio(0, 500).then(end) : end();
+}
+// Live streams can drop or stall; reconnect quietly a few times before giving up.
+function recover() {
+  if (radioState !== 'playing' || !radioNow) return;
+  if (++retries > 3) { const name = radioNow.name; stopRadio(); radioState = 'error'; radioError = `${name} keeps dropping out — try another station.`; render(); return; }
+  connect(radioNow, { reconnecting: true });
+}
+const armWatchdog = () => { if (radioState !== 'playing') return; clearTimeout(watchdog); watchdog = setTimeout(recover, 9000); };
+radio.addEventListener('waiting', armWatchdog);
+radio.addEventListener('stalled', armWatchdog);
+radio.addEventListener('playing', () => clearTimeout(watchdog));
+radio.addEventListener('ended', () => recover());
+radio.addEventListener('error', () => { if (radioState === 'playing') recover(); });
+
 const RB = ['https://de1.api.radio-browser.info', 'https://nl1.api.radio-browser.info', 'https://at1.api.radio-browser.info'];
 async function searchStations(q) {
   for (const host of RB) {
@@ -168,8 +246,8 @@ async function searchStations(q) {
       if (!res.ok) continue;
       const list = await res.json();
       // Only secure (https) streams can play on an https page.
-      return list.filter((s) => (s.url_resolved || '').startsWith('https://')).slice(0, 12)
-        .map((s) => ({ id: s.stationuuid, name: s.name.trim(), tag: [s.tags?.split(',').slice(0, 2).join(' · '), s.country].filter(Boolean).join(' · '), url: s.url_resolved, by: 'Radio Browser' }));
+      return list.filter((x) => (x.url_resolved || '').startsWith('https://')).slice(0, 12)
+        .map((x) => ({ id: x.stationuuid, name: x.name.trim(), tag: [x.tags?.split(',').slice(0, 2).join(' · '), x.country].filter(Boolean).join(' · '), mirrors: [x.url_resolved], by: 'Radio Browser' }));
     } catch {}
   }
   throw new Error('The station directory is unreachable right now.');
@@ -178,31 +256,31 @@ async function searchStations(q) {
 // ==========================================================================
 // Timer hooks: music follows your reading
 // ==========================================================================
-let pausedByTimer = { calm: false, radio: false, spotify: false };
+let pausedByTimer = { calm: false, radio: null, spotify: false };
 export async function onTimerPause() {
   if (S().followTimer === false) return;
-  pausedByTimer = { calm: calmPlaying(), radio: !!radioNow && !radio.paused, spotify: Sp.isConnected() && Sp.isPlaying() };
+  pausedByTimer = { calm: calmPlaying(), radio: radioActive() ? radioNow : null, spotify: Sp.isConnected() && Sp.isPlaying() };
   if (pausedByTimer.calm) master.gain.setTargetAtTime(0, ctx.currentTime, 0.35);
-  if (pausedByTimer.radio) { await fadeRadio(0); radio.pause(); }
+  if (pausedByTimer.radio) { const st = radioNow; stopRadio(); radioState = 'paused'; radioNow = st; render(); }
   if (pausedByTimer.spotify) Sp.pause();
 }
 export async function onTimerResume() {
   if (S().followTimer === false) return;
   if (pausedByTimer.calm) { audio(); master.gain.setTargetAtTime(1, ctx.currentTime, 0.5); }
-  if (pausedByTimer.radio && radioNow) { try { await radio.play(); fadeRadio(S().radioVolume / 100); } catch {} }
+  if (pausedByTimer.radio && radioState === 'paused') connect(pausedByTimer.radio);   // live radio: a fresh connection
   if (pausedByTimer.spotify) Sp.resume();
-  pausedByTimer = { calm: false, radio: false, spotify: false };
+  pausedByTimer = { calm: false, radio: null, spotify: false };
 }
 export async function stopAll() {
   if (Object.values(S().mix).some((v) => v > 0)) S().lastMix = { ...S().mix };
   S().mix = {}; remember();
   for (const k of Object.keys(voices)) voices[k].gain.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
   setTimeout(() => { for (const [k, v] of Object.entries(voices)) { v.stop(); v.gain.disconnect(); delete voices[k]; } }, 1500);
-  if (radioNow) { await fadeRadio(0); radio.pause(); radioNow = null; }
+  if (radioNow || radioState !== 'idle') stopRadio();
   if (Sp.isConnected() && Sp.isPlaying()) Sp.pause();
   render();
 }
-export const anyPlaying = () => calmPlaying() || (!!radioNow && !radio.paused) || (Sp.isConnected() && Sp.isPlaying());
+export const anyPlaying = () => calmPlaying() || radioActive() || (Sp.isConnected() && Sp.isPlaying());
 
 // ==========================================================================
 // The panel
@@ -269,18 +347,20 @@ function calmPane() {
 }
 
 function stationCard(st) {
-  const on = radioNow?.url === st.url && !radio.paused;
-  const fav = (S().favourites || []).some((f) => f.url === st.url);
-  return `<div class="station ${on ? 'on' : ''}">
-    <button class="st-play" data-snd="station" data-url="${esc(st.url)}" aria-label="${on ? 'Stop' : 'Play'} ${esc(st.name)}">${on ? '❚❚' : '▶'}</button>
-    <div class="st-text"><b>${esc(st.name)}</b><small>${esc(st.tag)}${st.by ? ` · ${esc(st.by)}` : ''}</small></div>
-    ${st.by === 'Radio Browser' || fav ? `<button class="icon-btn" data-snd="fav" data-url="${esc(st.url)}" title="${fav ? 'Remove from' : 'Add to'} your stations">${fav ? '♥' : '♡'}</button>` : ''}
+  const mine = radioNow?.id === st.id;
+  const state = mine ? radioState : 'idle';
+  const busy = state === 'connecting' || state === 'reconnecting';
+  const fav = (S().favourites || []).some((f) => f.id === st.id);
+  return `<div class="station ${state === 'playing' ? 'on' : ''} ${busy ? 'busy' : ''}">
+    <button class="st-play" data-snd="station" data-id="${esc(st.id)}" aria-label="${state === 'playing' || busy ? 'Stop' : 'Play'} ${esc(st.name)}">${busy ? '<span class="spin"></span>' : state === 'playing' ? '■' : '▶'}</button>
+    <div class="st-text"><b>${esc(st.name)}</b><small>${busy ? (state === 'reconnecting' ? 'Reconnecting…' : 'Connecting…') : esc(st.tag + (st.by ? ` · ${st.by}` : ''))}</small></div>
+    ${st.by === 'Radio Browser' || fav ? `<button class="icon-btn" data-snd="fav" data-id="${esc(st.id)}" title="${fav ? 'Remove from' : 'Add to'} your stations">${fav ? '♥' : '♡'}</button>` : ''}
   </div>`;
 }
-let stationIndex = new Map();
+const stationIndex = new Map();
 function radioPane() {
   const favs = S().favourites || [];
-  [...STATIONS, ...favs, ...(rbResults || [])].forEach((st) => stationIndex.set(st.url, st));
+  [...STATIONS, ...favs, ...(Array.isArray(rbResults) ? rbResults : [])].forEach((st) => stationIndex.set(st.id, st));
   return `
     ${radioError ? `<p class="snd-error">${esc(radioError)}</p>` : ''}
     <div class="stations">${STATIONS.map(stationCard).join('')}</div>
@@ -289,7 +369,7 @@ function radioPane() {
     ${rbError ? `<p class="snd-error">${esc(rbError)}</p>` : ''}
     ${rbResults === 'loading' ? '<p class="muted small">Searching…</p>' : Array.isArray(rbResults) ? (rbResults.length ? `<div class="stations">${rbResults.map(stationCard).join('')}</div>` : '<p class="muted small">No stations found.</p>') : ''}
     <div class="row gap center-v snd-vol"><span class="muted small">Volume</span><input type="range" min="0" max="100" value="${S().radioVolume}" data-snd="radio-vol"></div>
-    <p class="muted small">Free internet radio. Stations from <a href="https://somafm.com" target="_blank" rel="noopener">SomaFM</a> (listener-supported) and SRG SSR; search uses the free <a href="https://www.radio-browser.info" target="_blank" rel="noopener">Radio Browser</a> directory.</p>`;
+    <p class="muted small">Free internet radio. Stations from <a href="https://somafm.com" target="_blank" rel="noopener">SomaFM</a> (listener-supported) and SRG SSR; search uses the free <a href="https://www.radio-browser.info" target="_blank" rel="noopener">Radio Browser</a> directory. If a station is busy, the next server is tried automatically.</p>`;
 }
 
 function spotifyPane() {
@@ -359,11 +439,16 @@ function onClick(e) {
     case 'preset': for (const k of Object.keys(SOUNDS)) setLevel(k, PRESETS[v][k] || 0); remember(); render(); break;
     case 'stop-all': stopAll(); break;
     case 'last-mix': for (const k of Object.keys(SOUNDS)) setLevel(k, (s.lastMix || {})[k] || 0); remember(); render(); break;
-    case 'station': { const st = stationIndex.get(el.dataset.url); if (st) playStation(st).then(render); break; }
+    case 'station': {
+      const st = stationIndex.get(el.dataset.id); if (!st) break;
+      if (radioNow?.id === st.id && (radioActive() || radioState === 'paused')) { stopRadio(); render(); }
+      else connect(st);
+      break;
+    }
     case 'fav': {
-      const st = stationIndex.get(el.dataset.url); if (!st) break;
+      const st = stationIndex.get(el.dataset.id); if (!st) break;
       const favs = s.favourites || (s.favourites = []);
-      const i = favs.findIndex((f) => f.url === st.url);
+      const i = favs.findIndex((f) => f.id === st.id);
       i >= 0 ? favs.splice(i, 1) : favs.push(st); remember(); render(); break;
     }
     case 'sp-connect': Sp.connect().catch((err) => { spError = err.message; render(); }); break;
@@ -378,7 +463,7 @@ function onClick(e) {
 function onInput(e) {
   const el = e.target;
   if (el.dataset.snd === 'level') { setLevel(el.dataset.v, Number(el.value)); el.closest('.mix-row')?.classList.toggle('on', Number(el.value) > 0); }
-  if (el.dataset.snd === 'radio-vol') { S().radioVolume = Number(el.value); radio.volume = Number(el.value) / 100; }
+  if (el.dataset.snd === 'radio-vol') { S().radioVolume = Number(el.value); clearInterval(fading); try { radio.volume = Number(el.value) / 100; } catch {} }
 }
 function onChangeEv(e) {
   const el = e.target;
@@ -417,6 +502,7 @@ async function onSubmit(e) {
 export function init() {
   const s = S();
   if (s.embedLink) embedUri = Sp.toUri(s.embedLink);
+  s.favourites = (s.favourites || []).map((f) => (f.mirrors ? f : { ...f, id: f.id || f.url, mirrors: [f.url] }));
   // Browsers don't allow sound to start by itself, so start silent and offer the last mix.
   if (Object.values(s.mix || {}).some((v) => v > 0)) s.lastMix = { ...s.mix };
   s.mix = {};
