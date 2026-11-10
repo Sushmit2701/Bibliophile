@@ -961,3 +961,16 @@ dialog::backdrop { background: rgba(30, 24, 18, .35); }
 
 .st-heat .heatmap { grid-template-rows: repeat(7, 14px); grid-auto-columns: 14px; gap: 3px; overflow-x: auto; scrollbar-width: thin; }
 @media (max-width: 760px) { .cols .col-x { font-size: .6rem; } }
+
+/* library: grouped by year read */
+.shelf-group { margin: 2.2rem 0 0; }
+.shelf-group:first-of-type { margin-top: 1.2rem; }
+.shelf-group-head { display: flex; justify-content: space-between; align-items: baseline; gap: .4rem 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
+.shelf-group-head h2 { margin: 0; font-size: 1.6rem; display: flex; align-items: baseline; gap: .7rem; }
+.year-group .shelf-group-head h2 { font-size: 2.3rem; }
+.group-count { font: 600 .78rem var(--sans); color: var(--muted); background: var(--surface); box-shadow: var(--raise-sm); border-radius: 999px; padding: .2rem .7rem; letter-spacing: .02em; }
+.year-group:first-of-type .group-count, .shelf-group:not(.year-group) + .year-group .group-count { color: var(--accent); }
+.year-progress { max-width: 420px; margin: -.3rem 0 1.2rem; }
+.shelf-group .shelf { margin-bottom: .4rem; }
+
+.toolbar select { min-width: 11rem; }

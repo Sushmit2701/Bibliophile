@@ -223,7 +223,7 @@ const routes = {
   settings: viewSettings,
 };
 const ui = { // transient UI state that survives re-renders
-  libStatus: 'all', libSort: 'recent', libQuery: '',
+  libStatus: 'all', libSort: db.settings.libSort || 'year', libQuery: '',
   nKind: 'all', nQuery: '', nTag: '', nFav: false, nBook: '',
   bookKind: 'all', reviewQueue: null, reviewIdx: 0, revealed: false, dailyOffset: 0,
 };
@@ -402,11 +402,62 @@ function itemCard(i, opts = {}) {
     </article>`;
 }
 
+function shelfBook(b) {
+  const n = itemsForBook(b.id).length;
+  const when = b.status === 'finished' && b.finishedAt ? new Date(b.finishedAt + 'T12:00:00').toLocaleDateString(undefined, { month: 'short' }) : '';
+  return `<a class="shelf-book" href="#/book/${b.id}">
+    ${cover(b)}
+    <div class="shelf-title">${esc(b.title)}</div>
+    <div class="muted small">${esc(b.author)}</div>
+    <div class="small shelf-meta">${b.rating ? stars(b.rating) : `<span class="status-pill s-${b.status}">${STATUSES[b.status]}</span>`}${n ? ` <span class="muted">· ${n} ❝</span>` : ''}${when && ui.libSort === 'year' ? ` <span class="muted">· ${when}</span>` : ''}</div>
+  </a>`;
+}
+
+// "By year read": what you're reading now, then each year's finished books (newest first), then the rest.
+function libraryByYear(list) {
+  const year = String(new Date().getFullYear());
+  const goal = db.settings.yearlyGoal || 0;
+  const byRecent = (x, y) => (y.finishedAt || '').localeCompare(x.finishedAt || '') || (y.updatedAt || '').localeCompare(x.updatedAt || '');
+  const groups = [];
+  const reading = list.filter((b) => b.status === 'reading');
+  if (reading.length) groups.push({ key: 'reading', title: 'Reading now', books: reading });
+  const finished = list.filter((b) => b.status === 'finished');
+  const years = new Map();
+  for (const b of finished) { const y = (b.finishedAt || '').slice(0, 4) || 'undated'; if (!years.has(y)) years.set(y, []); years.get(y).push(b); }
+  [...years.keys()].filter((y) => y !== 'undated').sort().reverse().forEach((y) => {
+    const books = years.get(y).sort(byRecent);
+    const pages = books.reduce((t, x) => t + (Number(x.pages) || 0), 0);
+    const rated = books.filter((x) => x.rating);
+    const avg = rated.length ? rated.reduce((t, x) => t + x.rating, 0) / rated.length : 0;
+    groups.push({
+      key: y, year: y, title: y, books,
+      count: plural(books.length, 'book'),
+      meta: [y === year && goal ? `${books.length} of your ${goal}-book goal` : '', pages ? `${pages.toLocaleString()} pages` : '', avg ? `average ${fmtRating(Math.round(avg * 10) / 10)}★` : ''].filter(Boolean).join(' · '),
+      progress: y === year && goal ? Math.min(100, (books.length / goal) * 100) : null,
+    });
+  });
+  if (years.has('undated')) groups.push({ key: 'undated', title: 'Finished, date not set', books: years.get('undated'), note: 'Add a finish date (Edit) to place these in a year.' });
+  for (const st of ['want', 'paused', 'abandoned']) {
+    const books = list.filter((b) => b.status === st);
+    if (books.length) groups.push({ key: st, title: STATUSES[st], books: books.sort((x, y) => (y.updatedAt || '').localeCompare(x.updatedAt || '')) });
+  }
+  return groups.map((g) => `
+    <section class="shelf-group ${g.year ? 'year-group' : ''}">
+      <div class="shelf-group-head">
+        <h2>${esc(g.title)}${g.count ? ` <span class="group-count">${g.count}</span>` : ` <span class="group-count">${g.books.length}</span>`}</h2>
+        ${g.meta ? `<span class="muted small">${esc(g.meta)}</span>` : ''}
+      </div>
+      ${g.progress != null ? `<div class="progress year-progress"><span style="width:${g.progress}%"></span></div>` : ''}
+      ${g.note ? `<p class="muted small">${esc(g.note)}</p>` : ''}
+      <div class="shelf">${g.books.map(shelfBook).join('')}</div>
+    </section>`).join('');
+}
+
 function viewLibrary() {
-  const counts = { all: db.books.length };
+  const counts = { all: db.books.length, top: db.books.filter((b) => (b.rating || 0) >= 4).length };
   for (const b of db.books) counts[b.status] = (counts[b.status] || 0) + 1;
   const q = ui.libQuery.toLowerCase();
-  let list = db.books.filter((b) => (ui.libStatus === 'all' || b.status === ui.libStatus)
+  let list = db.books.filter((b) => (ui.libStatus === 'all' || (ui.libStatus === 'top' ? (b.rating || 0) >= 4 : b.status === ui.libStatus))
     && (!q || `${b.title} ${b.author} ${(b.tags || []).join(' ')}`.toLowerCase().includes(q)));
   const sorters = {
     recent: (a, b) => (b.finishedAt || b.updatedAt || '').localeCompare(a.finishedAt || a.updatedAt || ''),
@@ -415,7 +466,9 @@ function viewLibrary() {
     rating: (a, b) => (b.rating || 0) - (a.rating || 0),
     highlights: (a, b) => itemsForBook(b.id).length - itemsForBook(a.id).length,
   };
-  list.sort(sorters[ui.libSort] || sorters.recent);
+  const grouped = ui.libSort === 'year';
+  if (!grouped) list.sort(sorters[ui.libSort] || sorters.recent);
+  const filters = ['all', 'reading', 'finished', 'want', 'paused', 'abandoned'];
 
   return `
     <header class="page-head">
@@ -424,24 +477,19 @@ function viewLibrary() {
     </header>
     <div class="toolbar">
       <div class="chips">
-        ${['all', ...Object.keys(STATUSES)].map((s) => `<button class="chip ${ui.libStatus === s ? 'on' : ''}" data-action="lib-status" data-value="${s}">${s === 'all' ? 'All' : STATUSES[s]} <span class="count">${counts[s] || 0}</span></button>`).join('')}
+        ${filters.map((s) => `<button class="chip ${ui.libStatus === s ? 'on' : ''}" data-action="lib-status" data-value="${s}">${s === 'all' ? 'All' : STATUSES[s]} <span class="count">${counts[s] || 0}</span></button>`).join('')}
+        <button class="chip ${ui.libStatus === 'top' ? 'on' : ''}" data-action="lib-status" data-value="top">★ 4 and up <span class="count">${counts.top}</span></button>
       </div>
       <div class="row gap">
         <input type="search" placeholder="Search books…" value="${esc(ui.libQuery)}" data-input="libQuery">
-        <select data-change="libSort">
-          ${Object.entries({ recent: 'Recent', title: 'Title', author: 'Author', rating: 'Rating', highlights: 'Most highlights' }).map(([k, v]) => `<option value="${k}" ${ui.libSort === k ? 'selected' : ''}>${v}</option>`).join('')}
+        <select data-change="libSort" aria-label="Arrange by">
+          ${Object.entries({ year: 'By year read', recent: 'Recent', title: 'Title', author: 'Author', rating: 'Rating', highlights: 'Most highlights' }).map(([k, v]) => `<option value="${k}" ${ui.libSort === k ? 'selected' : ''}>${v}</option>`).join('')}
         </select>
       </div>
     </div>
-    ${list.length ? `<div class="shelf">${list.map((b) => {
-      const n = itemsForBook(b.id).length;
-      return `<a class="shelf-book" href="#/book/${b.id}">
-        ${cover(b)}
-        <div class="shelf-title">${esc(b.title)}</div>
-        <div class="muted small">${esc(b.author)}</div>
-        <div class="small shelf-meta">${b.rating ? stars(b.rating) : `<span class="status-pill s-${b.status}">${STATUSES[b.status]}</span>`}${n ? ` <span class="muted">· ${n} ❝</span>` : ''}</div>
-      </a>`;
-    }).join('')}</div>` : `<p class="empty">No books here yet.</p>`}
+    ${!list.length ? `<p class="empty">No books here yet.</p>`
+      : grouped ? libraryByYear(list)
+      : `<div class="shelf">${list.map(shelfBook).join('')}</div>`}
   `;
 }
 
@@ -1562,7 +1610,11 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', async (e) => {
   const el = e.target;
-  if (el.dataset.change) { ui[el.dataset.change] = el.value; render(); return; }
+  if (el.dataset.change) {
+    ui[el.dataset.change] = el.value;
+    if (el.dataset.change === 'libSort') { db.settings.libSort = el.value; save({ quiet: true }); } // remember how you like the library arranged
+    render(); return;
+  }
   if (el.matches('[data-timer-pick]') && el.value) { db.timer = { bookId: el.value, startedAt: Date.now(), elapsed: 0 }; save(); return; }
   if (el.dataset.actionChange === 'status') {
     const b = getBook(el.dataset.id);

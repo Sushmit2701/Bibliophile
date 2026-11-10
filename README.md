@@ -7,7 +7,7 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 ## What it does
 
 **Books**
-- Library with shelves: *Want to read · Reading · Finished · Paused · Did not finish*
+- Library arranged **by year read** by default: *Reading now*, then each year (2026, 2025…) with its count, pages, average rating and progress towards your yearly goal, then *Want to read*, *Paused* and *Did not finish*. Filter by status or **★ 4 and up**, or switch to Recent / Title / Author / Rating / Most highlights; your choice is remembered
 - Search Open Library to auto-fill the title, author, pages, year, ISBN and cover
 - **Real covers, saved in the app:** each cover is downloaded once and stored in your browser, so it shows offline, won't disappear if a website changes, and appears in your year image. If Open Library has no cover, the app checks Google Books (by ISBN, then by title and author). You can also upload a photo of your own copy. *Settings → Covers → Save all covers* fills in your whole library. Covers are downloaded through [wsrv.nl](https://wsrv.nl), a free image relay, because Google Books and Open Library don't let web pages save their images directly. Saved covers are included in your backup file.
 - **Half-star ratings** (e.g. 3.5★), plus an optional **detailed rating**: score Writing, Story & ideas, Emotional pull and Staying power from 1 to 5, and get a suggested overall rating. Stats shows your averages for each.
