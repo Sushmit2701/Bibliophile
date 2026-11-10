@@ -9,6 +9,7 @@ import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
 import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate, reelTemplate, aiCaption, aiReel, aiUsage, resetTimeLocal } from './ai.js';
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
 import * as Recs from './recs.js';
+import { statsHTML, initChartTooltips } from './stats.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
   useUploadedCover, removeCover, clearCovers, exportCovers, importCovers,
@@ -245,6 +246,8 @@ function render() {
   const due = db.items.length > 0 && !db.reviewLog[today()];
   $$('.review-dot').forEach((d) => d.hidden = !due);
   renderTimerBar(route);
+  // Activity grids open on the most recent weeks.
+  $$('.heatmap').forEach((h) => { h.scrollLeft = h.scrollWidth; });
 }
 window.addEventListener('hashchange', () => { if (location.hash.split('/')[1] !== 'review') ui.reviewQueue = null; render(); });
 onChange(render);
@@ -630,83 +633,15 @@ function viewReview() {
     </div>`;
 }
 
+let statsEnriching = false;
 function viewStats() {
-  const finished = db.books.filter((b) => b.status === 'finished');
-  const byYear = {};
-  for (const b of finished) { const y = (b.finishedAt || '').slice(0, 4) || 'Unknown'; (byYear[y] ||= []).push(b); }
-  const years = Object.keys(byYear).sort().reverse();
-  const maxYear = Math.max(1, ...Object.values(byYear).map((l) => l.length));
-  const pagesRead = finished.reduce((s, b) => s + (Number(b.pages) || 0), 0);
-  const rated = finished.filter((b) => b.rating);
-  const avg = rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length).toFixed(1) : '—';
-  const authors = {};
-  for (const b of finished) if (b.author) authors[b.author] = (authors[b.author] || 0) + 1;
-  const topAuthors = Object.entries(authors).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const topHighlighted = db.books.map((b) => [b, itemsForBook(b.id).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const kinds = {};
-  for (const i of db.items) kinds[i.kind] = (kinds[i.kind] || 0) + 1;
-  const aspectStats = Object.entries(ASPECTS).map(([k, asp]) => {
-    const scored = db.books.filter((b) => b.aspects?.[k] > 0);
-    if (!scored.length) return null;
-    const best = scored.slice().sort((x, y) => y.aspects[k] - x.aspects[k] || (y.rating || 0) - (x.rating || 0))[0];
-    return { asp, avg: scored.reduce((t, b) => t + b.aspects[k], 0) / scored.length, best };
-  }).filter(Boolean);
-
-  // pages per day for the last 26 weeks (from reading sessions)
-  const perDay = {};
-  for (const b of db.books) for (const s of b.sessions || []) perDay[s.date] = (perDay[s.date] || 0) + Math.max(0, s.toPage - s.fromPage);
-  for (const [d, n] of Object.entries(db.reviewLog)) perDay[d] = perDay[d] || (n ? 0.0001 : 0);
-  const start = addDays(today(), -7 * 26 + 1 - new Date().getDay());
-  let cells = '';
-  for (let d = start; d <= today(); d = addDays(d, 1)) {
-    const n = perDay[d] || 0;
-    const lvl = n === 0 ? 0 : n < 1 ? 1 : n < 20 ? 2 : n < 50 ? 3 : 4;
-    cells += `<span class="cell l${lvl}" title="${fmtDate(d)}: ${n >= 1 ? Math.round(n) + ' pages' : n ? 'reviewed' : 'no reading'}"></span>`;
+  // Genres come from Open Library subjects; look them up quietly for books that don't have them yet.
+  if (!statsEnriching && db.books.some((b) => !b.ol?.at)) {
+    statsEnriching = true;
+    Recs.enrichLibrary().then((n) => { if (n && location.hash.startsWith('#/stats')) render(); }).catch(() => {});
   }
-  const monthNow = today().slice(0, 7);
-  const thisMonth = finished.filter((b) => (b.finishedAt || '').startsWith(monthNow)).length;
-
-  return `
-    <header class="page-head"><h1>Stats</h1><button class="btn primary" data-action="year-card">Share my year</button></header>
-    <div class="stat-tiles">
-      <div class="tile"><div class="num">${finished.length}</div><div class="muted small">books finished</div></div>
-      <div class="tile"><div class="num">${pagesRead.toLocaleString()}</div><div class="muted small">pages read</div></div>
-      <div class="tile"><div class="num">${db.items.length}</div><div class="muted small">passages saved</div></div>
-      <div class="tile"><div class="num">${avg}</div><div class="muted small">avg rating</div></div>
-      <div class="tile"><div class="num">${thisMonth}</div><div class="muted small">finished this month</div></div>
-      <div class="tile"><div class="num">${reviewStreak()}</div><div class="muted small">day review streak</div></div>
-    </div>
-
-    <section class="section card">
-      <h2>Activity <span class="muted small">last 6 months</span></h2>
-      <div class="heatmap">${cells}</div>
-      <p class="muted small">Darker = more pages logged. Lighter dots are review-only days.</p>
-    </section>
-
-    <div class="grid-2">
-      <section class="card">
-        <h2>Books per year</h2>
-        ${years.length ? years.map((y) => `<div class="bar-row"><span>${y}</span><div class="bar"><span style="width:${(byYear[y].length / maxYear) * 100}%"></span></div><b>${byYear[y].length}</b></div>`).join('') : '<p class="muted">Finish a book to see this.</p>'}
-      </section>
-      <section class="card">
-        <h2>Most-read authors</h2>
-        ${topAuthors.length ? `<ol class="rank">${topAuthors.map(([a, n]) => `<li>${esc(a)} <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
-      </section>
-      <section class="card">
-        <h2>Most highlighted</h2>
-        ${topHighlighted.length ? `<ol class="rank">${topHighlighted.map(([b, n]) => `<li><a href="#/book/${b.id}">${esc(b.title)}</a> <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
-      </section>
-      ${aspectStats.length ? `<section class="card">
-        <h2>Rating breakdown</h2>
-        ${aspectStats.map(({ asp, avg: av, best }) => `<div class="bar-row wide"><span>${asp.label}</span><div class="bar"><span style="width:${(av / 5) * 100}%"></span></div><b>${av.toFixed(1)}</b></div>
-          <div class="muted small best">Best: <a href="#/book/${best.id}">${esc(best.title)}</a></div>`).join('')}
-      </section>` : ''}
-      <section class="card">
-        <h2>What you save</h2>
-        ${Object.keys(kinds).length ? `<ol class="rank plain">${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li>${KINDS[k]?.label || k}s <span class="muted">${n}</span></li>`).join('')}</ol>` : '<p class="muted">—</p>'}
-      </section>
-    </div>
-  `;
+  const live = db.timer ? timerMs() / 60000 : 0;
+  return statsHTML(live, { fmtDate });
 }
 
 function viewSettings() {
@@ -719,10 +654,11 @@ function viewSettings() {
       <h2>Preferences</h2>
       <form class="form" data-form="settings">
         <label>Your name <input name="name" value="${esc(s.name)}" placeholder="for the greeting"></label>
-        <label>Yearly reading goal <input name="yearlyGoal" type="number" min="0" value="${s.yearlyGoal}"></label>
+        <label>Yearly reading goal (books) <input name="yearlyGoal" type="number" min="0" value="${s.yearlyGoal}"></label>
+        <label>Daily reading goal (minutes) <input name="dailyMinutes" type="number" min="5" max="600" value="${s.dailyMinutes || 30}"></label>
         <label>Passages per daily review <input name="dailyReview" type="number" min="1" max="50" value="${s.dailyReview}"></label>
         <label>Theme
-          <select name="theme">${Object.entries({ auto: 'Follow device', light: 'Ivory (light)', dark: 'Library at night (dark)' }).map(([k, v]) => `<option value="${k}" ${s.theme === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          <select name="theme">${Object.entries({ auto: 'Follow device', light: 'Soft Ivory (light)', dark: 'Night Reading (dark)' }).map(([k, v]) => `<option value="${k}" ${s.theme === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
         <button class="btn primary">Save</button>
       </form>
@@ -1003,7 +939,7 @@ function socialModal(book) {
 async function yearModal() {
   const years = yearsWithReading();
   let year = years[0], theme = db.settings.theme === 'dark' ? 'night' : 'ivory', blob = null;
-  const names = { ivory: 'Ivory', night: 'Library at night', oxblood: 'Oxblood' };
+  const names = { ivory: 'Soft Ivory', night: 'Night Reading', oxblood: 'Oxblood' };
   openModal(`
     <h2>Your year in books</h2>
     <div class="row gap wrap between center-v year-controls">
@@ -1607,6 +1543,7 @@ document.addEventListener('click', async (e) => {
       toast(status === 'want' ? `Added “${c.title}” to Want to read` : `Added “${c.title}” — give it a rating`);
       break;
     }
+    case 'go-timer': location.hash = '#/timer'; break;
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
     case 'review':
@@ -1720,7 +1657,7 @@ document.addEventListener('submit', (e) => {
     toast(b.status === 'finished' ? 'Finished. Add your review below.' : 'Progress logged');
   } else if (type === 'settings') {
     Object.assign(db.settings, {
-      name: fd.name.trim(), yearlyGoal: Number(fd.yearlyGoal) || 0,
+      name: fd.name.trim(), yearlyGoal: Number(fd.yearlyGoal) || 0, dailyMinutes: Math.max(5, Number(fd.dailyMinutes) || 30),
       dailyReview: Math.max(1, Number(fd.dailyReview) || 5), theme: fd.theme,
     });
     save(); applyTheme(); toast('Settings saved');
@@ -1751,6 +1688,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- boot ----------
 applyTheme();
+initChartTooltips();
 render();
 onCoverChange(render);
 loadCovers().then(() => {

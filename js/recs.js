@@ -204,6 +204,15 @@ export function librarySignature() {
 }
 export const isStale = (c) => !c || c.sig !== librarySignature() || Date.now() - c.at > 24 * 3600e3;
 
+// Look up subjects for books that don't have them yet (also used for genres on the Stats page).
+export async function enrichLibrary() {
+  const todo = db.books.filter((b) => !(b.ol?.at && Date.now() - b.ol.at < 60 * 864e5));
+  if (!todo.length) return 0;
+  await pool(todo.map((b) => () => enrich(b)), 3);
+  save({ quiet: true });
+  return todo.length;
+}
+
 export async function buildRecommendations(onProgress = () => {}) {
   // 1. learn subjects of your own books (once per book)
   const todo = db.books.filter((b) => !(b.ol?.at && Date.now() - b.ol.at < 60 * 864e5));

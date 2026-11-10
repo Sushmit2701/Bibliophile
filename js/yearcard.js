@@ -3,8 +3,8 @@ import { db, itemsForBook, fmtRating } from './store.js';
 import { coverSrc } from './covers.js';
 
 const THEMES = {
-  ivory: { bg: '#f6f1e7', fg: '#1d1a17', soft: '#4a433c', muted: '#8b8176', accent: '#6e1f24', gold: '#a8843f', rule: '#d9cdb8' },
-  night: { bg: '#0e1311', fg: '#ebe4d6', soft: '#c8c0b1', muted: '#8d978f', accent: '#c6a15b', gold: '#c6a15b', rule: '#2c3833' },
+  ivory: { bg: '#f4f1ec', fg: '#1f1b17', soft: '#4d463f', muted: '#857c72', accent: '#e8501f', gold: '#d4561f', rule: '#e2dbd0' },
+  night: { bg: '#26272b', fg: '#ebe7e0', soft: '#c3c0b9', muted: '#94959c', accent: '#ff7a3c', gold: '#ff8a4c', rule: '#3a3b41' },
   oxblood: { bg: '#3d1013', fg: '#f3e6d3', soft: '#e3cfb5', muted: '#b9988a', accent: '#d8b46a', gold: '#d8b46a', rule: '#5e2427' },
 };
 export const YEAR_THEMES = Object.keys(THEMES);

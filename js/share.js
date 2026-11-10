@@ -2,8 +2,8 @@
 import { db, getBook, itemsForBook, KINDS, STATUSES, ASPECTS, fmtRating } from './store.js';
 
 const THEMES = [
-  { bg: '#f6f1e7', fg: '#1d1a17', accent: '#6e1f24' },
-  { bg: '#101714', fg: '#ece4d4', accent: '#c6a15b' },
+  { bg: '#f4f1ec', fg: '#1f1b17', accent: '#e8501f' },
+  { bg: '#26272b', fg: '#ebe7e0', accent: '#ff7a3c' },
   { bg: '#4a1518', fg: '#f3e6d3', accent: '#d8b46a' },
   { bg: '#1b2433', fg: '#ece7dc', accent: '#c6a15b' },
 ];

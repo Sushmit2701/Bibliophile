@@ -49,9 +49,12 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Children's and young-adult books are left out unless you read them. Everything is worked out on your device; the only thing sent anywhere is book searches to Open Library. It refreshes daily and whenever your library changes, and a few picks also appear on Home.
 
 **Stats**
-- Yearly reading goal, and whether you're ahead of or behind pace
-- Activity heatmap, books per year, pages read, average rating, most-read authors and most-highlighted books
-
+- **Today:** a ring showing minutes read against your daily goal (set it in Settings), plus pages read today.
+- **This year:** a ring for books against your yearly goal, pages, total time read, and whether you're ahead of or behind pace.
+- **Streak:** how many days in a row you've read, with this week's days marked, and your best run.
+- **Charts:** minutes per day this week (compared with last week), books finished per month, time spent reading (today, week, month, year) and your reading pace in pages per hour.
+- **Your library:** what you read by genre, how your ratings spread, your detailed-score averages, what you save, how you read (print, ebook, audio), a 12-month activity grid, top authors and most-highlighted books.
+- Hover over or tab to any bar for its exact value, and every chart has a "See the numbers" table.
 **Import / export**
 - Import **Kindle** `My Clippings.txt`. Kindle notes attach to their matching highlight.
 - Import a **Readwise** CSV export or a **Goodreads** library CSV
