@@ -521,3 +521,23 @@ export async function measure(name, seconds = 4) {
   for (const v of d) { peak = Math.max(peak, Math.abs(v)); sum += v * v; }
   return { peak: +peak.toFixed(3), rms: +Math.sqrt(sum / d.length).toFixed(4) };
 }
+
+// A soft bell for focus blocks: "ting ting ting" to start a break, one "ting" to read again.
+// It plays straight to the speakers, so it rings even while other sounds are faded out.
+export function bell(strikes = 3, gap = 0.8) {
+  audio();
+  const out = ctx.createGain(); out.gain.value = 0.22; out.connect(ctx.destination);
+  const partials = [[1, 1], [2.01, 0.45], [2.76, 0.28], [5.4, 0.12], [8.93, 0.05]]; // bell-like overtones
+  for (let i = 0; i < strikes; i++) {
+    const t0 = ctx.currentTime + 0.05 + i * gap;
+    const f0 = 988 * (i === strikes - 1 && strikes > 1 ? 0.89 : 1);       // last strike a touch lower
+    for (const [ratio, amp] of partials) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f0 * ratio;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(amp, t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.8 / Math.sqrt(ratio));
+      o.connect(g).connect(out); o.start(t0); o.stop(t0 + 3);
+    }
+  }
+}

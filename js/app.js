@@ -813,10 +813,93 @@ function fmtClock(ms) {
 }
 function tickTimer() {
   const t = db.timer;
+  focusTick();
   const clock = t ? fmtClock(timerMs()) : '';
   $$('.timer-clock').forEach((el) => { el.textContent = clock; });
-  document.title = t && t.startedAt ? `${clock} · ${getBook(t.bookId)?.title || 'Reading'}` : 'Bibliophile';
+  const f = t?.focus;
+  if (f) {
+    const left = focusLeft();
+    $$('.focus-left').forEach((el) => { el.textContent = fmtClock(Math.max(0, left)); });
+    $$('.focus-bar span').forEach((el) => { el.style.width = `${Math.min(100, 100 - (left / (f.work * 60000)) * 100)}%`; });
+  }
+  document.title = f?.phase === 'break' ? `Break ${fmtClock(Math.max(0, focusLeft()))} · Bibliophile`
+    : t && t.startedAt ? `${clock} · ${getBook(t.bookId)?.title || 'Reading'}` : 'Bibliophile';
 }
+
+// ============ FOCUS BLOCKS (Pomodoro) ============
+// Read for a set time, a bell rings, take a short break (every few blocks a longer one).
+// Break time is never counted as reading: the reading clock is stopped during breaks.
+const FOCUS_PRESETS = { '25/5': { work: 25, brk: 5 }, '50/10': { work: 50, brk: 10 }, '90/15': { work: 90, brk: 15 } };
+const focusCfg = () => ({ on: false, work: 25, brk: 5, longBrk: 15, every: 4, auto: true, ...(db.settings.focus || {}) });
+function newFocus() { const c = focusCfg(); return { work: c.work, brk: c.brk, longBrk: c.longBrk, every: c.every, auto: c.auto, round: 1, phase: 'read', blockStart: timerMs() }; }
+// Time left in the current reading block, or in the break.
+function focusLeft() {
+  const f = db.timer?.focus;
+  if (!f) return 0;
+  if (f.phase === 'break') return f.breakEndsAt - Date.now();
+  if (f.phase === 'breakover') return 0;
+  return f.work * 60000 - (timerMs() - f.blockStart);
+}
+function notify(title, body) {
+  try { navigator.vibrate?.([180, 90, 180]); } catch {}
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    try { new Notification(title, { body, icon: 'icons/icon-192.png', silent: true, tag: 'bibliophile-focus' }); } catch {}
+  }
+}
+function focusTick() {
+  const t = db.timer, f = t?.focus;
+  if (!f) return;
+  if (f.phase === 'read' && t.startedAt && focusLeft() <= 0) {
+    // Block finished. If the phone was locked past the bell, only count the block itself as reading.
+    const over = -focusLeft();
+    t.elapsed += Date.now() - t.startedAt - over; t.startedAt = null;
+    const long = f.round % f.every === 0;
+    f.breakLen = long ? f.longBrk : f.brk;
+    f.phase = 'break'; f.breakEndsAt = Date.now() - over + f.breakLen * 60000;
+    save({ quiet: true });
+    Sound.onTimerPause(); Sound.bell(3);
+    notify('Time for a break', `${f.breakLen}-minute ${long ? 'long ' : ''}break — stretch, look away, have some water.`);
+    render();
+  } else if (f.phase === 'break' && focusLeft() <= 0) {
+    Sound.bell(1, 0);
+    notify('Break’s over', f.auto ? 'Back to your book.' : 'Start your next block when you’re ready.');
+    if (f.auto) startNextBlock();                       // counts the next block
+    else { f.round += 1; f.phase = 'breakover'; save({ quiet: true }); render(); }
+  }
+}
+function startNextBlock() {
+  const t = db.timer, f = t?.focus;
+  if (!f) return;
+  if (f.phase === 'break') f.round += 1;      // leaving a break (on time or skipped) starts the next block
+  f.phase = 'read'; delete f.breakEndsAt;
+  if (!t.startedAt) t.startedAt = Date.now();
+  f.blockStart = timerMs();
+  save({ quiet: true });
+  Sound.onTimerResume();
+  render();
+}
+function focusPanel(t) {
+  const c = focusCfg(), f = t?.focus;
+  const on = f ? true : c.on;
+  const preset = Object.entries(FOCUS_PRESETS).find(([, v]) => v.work === c.work && v.brk === c.brk)?.[0];
+  return `
+    <section class="focus-card ${on ? 'on' : ''}">
+      <div class="focus-head">
+        <label class="switch"><input type="checkbox" data-focus="toggle" ${on ? 'checked' : ''}><span></span></label>
+        <div><b>Focus blocks</b><small>${on ? `${c.work} min reading · ${c.brk} min breaks · ${c.longBrk} min every ${c.every}` : 'Read in blocks with a bell for short breaks'}</small></div>
+      </div>
+      ${on ? `
+      <div class="chips focus-presets">${Object.keys(FOCUS_PRESETS).map((k) => `<button class="chip sm ${preset === k ? 'on' : ''}" data-action="focus-preset" data-v="${k}">${k.replace('/', ' / ')}</button>`).join('')}
+        <button class="chip sm ${preset ? '' : 'on'}" data-action="focus-custom">Custom</button></div>
+      ${!preset || ui.focusCustom ? `<div class="focus-custom">
+        <label>Read <input type="number" min="5" max="180" data-focus="work" value="${c.work}"> min</label>
+        <label>Break <input type="number" min="1" max="60" data-focus="brk" value="${c.brk}"> min</label>
+        <label>Long break <input type="number" min="1" max="90" data-focus="longBrk" value="${c.longBrk}"> min every <input type="number" min="2" max="10" data-focus="every" value="${c.every}"> blocks</label>
+      </div>` : ''}
+      <label class="focus-auto"><input type="checkbox" data-focus="auto" ${c.auto ? 'checked' : ''}> Start the next block by itself after a break</label>` : ''}
+    </section>`;
+}
+
 function renderTimerBar(route) {
   const bar = $('#timer-bar');
   const t = db.timer;
@@ -824,8 +907,9 @@ function renderTimerBar(route) {
   if (!book || route === 'timer') { bar.hidden = true; return; }
   bar.hidden = false;
   bar.innerHTML = `
-    <a href="#/timer" class="tb-main"><span class="tb-dot ${t.startedAt ? 'live' : ''}"></span><span class="tb-title">${esc(book.title)}</span><span class="timer-clock">${fmtClock(timerMs())}</span></a>
-    ${t.startedAt ? '<button class="link-btn" data-action="timer-pause">Pause</button>' : '<button class="link-btn" data-action="timer-resume">Resume</button>'}
+    <a href="#/timer" class="tb-main"><span class="tb-dot ${t.startedAt ? 'live' : ''}"></span><span class="tb-title">${t.focus?.phase === 'break' ? 'Break' : esc(book.title)}</span><span class="${t.focus?.phase === 'break' ? 'focus-left' : 'timer-clock'}">${t.focus?.phase === 'break' ? fmtClock(Math.max(0, focusLeft())) : fmtClock(timerMs())}</span></a>
+    ${t.focus && t.focus.phase !== 'read' ? '<button class="link-btn" data-action="focus-skip">Keep reading</button>'
+      : t.startedAt ? '<button class="link-btn" data-action="timer-pause">Pause</button>' : '<button class="link-btn" data-action="timer-resume">Resume</button>'}
     <button class="link-btn" data-action="timer-stop">Done</button>`;
 }
 
@@ -844,16 +928,36 @@ function viewTimer() {
       ${others.length ? `<p class="small muted">Or start something else:
         <select data-timer-pick class="pick-select">
           <option value="">Choose a book…</option>${others.map((b) => `<option value="${b.id}">${esc(b.title)}</option>`).join('')}
-        </select></p>` : ''}`;
+        </select></p>` : ''}
+      ${focusPanel(null)}`;
   }
   const running = !!t.startedAt;
+  const f = t.focus;
+  if (f && (f.phase === 'break' || f.phase === 'breakover')) {
+    const over = f.phase === 'breakover';
+    return `
+    <section class="reading-room on-break">
+      <div class="eyebrow center">${over ? 'Break’s over' : `${f.breakLen >= f.longBrk && f.round % f.every === 0 ? 'Long break' : 'Break'} · after block ${f.round}`}</div>
+      <div class="break-ring">${cover(book, 'md')}</div>
+      <h1>${over ? 'Ready when you are' : 'Rest your eyes'}</h1>
+      <p class="byline">${over ? `${esc(book.title)} is waiting.` : 'Stand up, stretch, look at something far away, have some water.'}</p>
+      ${over ? '' : `<div class="focus-clock big focus-left">${fmtClock(Math.max(0, focusLeft()))}</div>`}
+      <p class="muted small">Read so far: <span class="timer-clock">${fmtClock(timerMs())}</span> · breaks aren’t counted</p>
+      <div class="row gap center wrap">
+        <button class="btn primary" data-action="focus-skip">${over ? 'Start reading' : 'Skip break — keep reading'}</button>
+        <button class="btn" data-action="timer-stop">Finish &amp; log</button>
+      </div>
+    </section>${focusPanel(t)}`;
+  }
   return `
     <section class="reading-room">
-      <div class="eyebrow center">${running ? 'Now reading' : 'Paused'}</div>
+      <div class="eyebrow center">${running ? (f ? `Now reading · block ${f.round}` : 'Now reading') : 'Paused'}</div>
       <a href="#/book/${book.id}">${cover(book, 'lg')}</a>
       <h1>${esc(book.title)}</h1>
       <p class="byline">${esc(book.author)}${book.pages ? ` · from p. ${book.currentPage || 0}` : ''}</p>
       <div class="timer-clock big ${running ? '' : 'paused'}">${fmtClock(timerMs())}</div>
+      ${f ? `<div class="focus-status"><div class="focus-bar"><span style="width:${Math.min(100, 100 - (focusLeft() / (f.work * 60000)) * 100)}%"></span></div>
+        <p class="muted small"><span class="focus-left">${fmtClock(Math.max(0, focusLeft()))}</span> until a ${f.round % f.every === 0 ? f.longBrk : f.brk}-minute ${f.round % f.every === 0 ? 'long ' : ''}break</p></div>` : ''}
       <div class="row gap center wrap">
         ${running ? '<button class="btn" data-action="timer-pause">Pause</button>' : '<button class="btn" data-action="timer-resume">Resume</button>'}
         <button class="btn primary" data-action="timer-stop">Finish &amp; log</button>
@@ -862,7 +966,31 @@ function viewTimer() {
         <button class="link-btn" data-action="add-item" data-book="${book.id}">Save a passage</button>
         <button class="link-btn" data-action="timer-discard">Discard</button>
       </div>
-    </section>`;
+    </section>${focusPanel(t)}`;
+}
+
+// Focus settings: remembered for next time, and applied to the session that's running.
+function focusSetting(el) {
+  const c = focusCfg();
+  const k = el.dataset.focus;
+  if (k === 'toggle') {
+    c.on = el.checked;
+    if (c.on && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    const t = db.timer;
+    if (t) {
+      if (c.on && !t.focus) { t.focus = newFocus(); if (!t.startedAt) { t.startedAt = Date.now(); t.focus.blockStart = timerMs(); } }
+      if (!c.on && t.focus) { const wasBreak = t.focus.phase !== 'read'; delete t.focus; if (wasBreak) { t.startedAt = Date.now(); Sound.onTimerResume(); } }
+    }
+  } else if (k === 'auto') c.auto = el.checked;
+  else {
+    const n = Math.round(Number(el.value));
+    const lim = { work: [5, 180], brk: [1, 60], longBrk: [1, 90], every: [2, 10] }[k];
+    if (!n || !lim) return;
+    c[k] = Math.min(lim[1], Math.max(lim[0], n));
+  }
+  db.settings.focus = c;
+  if (db.timer?.focus && k !== 'toggle') { const f = db.timer.focus; f.work = c.work; f.brk = c.brk; f.longBrk = c.longBrk; f.every = c.every; f.auto = c.auto; }
+  save();
 }
 
 // ============ VOICE DICTATION ============
@@ -1080,8 +1208,8 @@ function viewForYou() {
   const head = `
     <header class="page-head">
       <div>
-        <div class="eyebrow">Recommendations</div>
-        <h1>For you</h1>
+        <div class="eyebrow">Picked for you</div>
+        <h1>Recommendations</h1>
       </div>
       <button class="btn" data-action="rec-refresh" ${ui.recLoading ? 'disabled' : ''}>${ui.recLoading ? 'Updating…' : 'Refresh'}</button>
     </header>
@@ -1150,7 +1278,7 @@ function homePicks() {
   const picks = first.items.filter((c) => !ui.recRemoved[c.key] && !ui.recAdded[c.key]).slice(0, 5);
   if (!picks.length) return '';
   return `<section class="section">
-    <div class="section-head"><h2>Picked for you</h2><a href="#/foryou" class="more">More →</a></div>
+    <div class="section-head"><h2>Recommended for you</h2><a href="#/foryou" class="more">All recommendations →</a></div>
     <div class="pick-row">${picks.map((c) => `<a href="#/foryou" class="pick-mini" title="${esc(c.reason)}">${cover(recCover(c))}<span class="shelf-title">${esc(c.title)}</span><span class="muted small">${esc(c.author)}</span></a>`).join('')}</div>
   </section>`;
 }
@@ -1540,7 +1668,7 @@ document.addEventListener('click', async (e) => {
     case 'timer-start': {
       const t = db.timer;
       if (t && t.bookId !== id && !confirm(`Stop the timer for “${getBook(t.bookId)?.title || 'another book'}” and start this one?`)) break;
-      if (!t || t.bookId !== id) db.timer = { bookId: id, startedAt: Date.now(), elapsed: 0 };
+      if (!t || t.bookId !== id) { db.timer = { bookId: id, startedAt: Date.now(), elapsed: 0 }; if (focusCfg().on) db.timer.focus = newFocus(); }
       else if (!t.startedAt) t.startedAt = Date.now();
       save();
       location.hash = '#/timer';
@@ -1621,6 +1749,13 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'go-timer': location.hash = '#/timer'; break;
+    case 'focus-preset': {
+      db.settings.focus = { ...focusCfg(), ...FOCUS_PRESETS[el.dataset.v] }; ui.focusCustom = false;
+      if (db.timer?.focus) Object.assign(db.timer.focus, FOCUS_PRESETS[el.dataset.v]);
+      save(); break;
+    }
+    case 'focus-custom': ui.focusCustom = true; render(); break;
+    case 'focus-skip': startNextBlock(); break;
     case 'copy-redirect': await navigator.clipboard?.writeText(Spotify.redirectUri()).catch(() => {}); toast('Copied — paste it into Redirect URIs'); break;
     case 'sp-connect': Spotify.connect().catch((err) => alert(err.message)); break;
     case 'sp-disconnect': if (confirm('Disconnect Spotify from this browser?')) { Spotify.disconnect(); render(); toast('Spotify disconnected'); } break;
@@ -1647,7 +1782,8 @@ document.addEventListener('change', async (e) => {
     if (el.dataset.change === 'libSort') { db.settings.libSort = el.value; save({ quiet: true }); } // remember how you like the library arranged
     render(); return;
   }
-  if (el.matches('[data-timer-pick]') && el.value) { db.timer = { bookId: el.value, startedAt: Date.now(), elapsed: 0 }; save(); return; }
+  if (el.matches('[data-timer-pick]') && el.value) { db.timer = { bookId: el.value, startedAt: Date.now(), elapsed: 0 }; if (focusCfg().on) db.timer.focus = newFocus(); save(); return; }
+  if (el.dataset.focus) { focusSetting(el); return; }
   if (el.dataset.actionChange === 'status') {
     const b = getBook(el.dataset.id);
     upsertBook({ id: b.id, status: el.value });

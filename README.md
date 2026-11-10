@@ -33,6 +33,11 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Tap **Start reading** on a book. A full-screen reading room shows the clock, and a small bar follows you around the app.
 - The timer is based on timestamps, so it keeps counting if you lock your phone or close the app. **Finish & log** fills in the minutes and asks which page you reached.
 
+**Focus blocks (Pomodoro)**
+- Switch on **Focus blocks** in the reading room: read for a set time (presets 25/5, 50/10, 90/15, or your own), then a soft "ting ting ting" bell starts a short break and any music fades out. Every few blocks the break is longer.
+- The big clock becomes a break countdown with *Skip break* and *Finish & log*. When the break ends, a single ting rings and the next block starts by itself (or waits, if you prefer).
+- Break time is never counted as reading. If your phone was locked past the bell, only the block itself counts. With notifications allowed, you're also alerted when the app is in the background.
+
 **Reading room sound**
 - A **Sound** panel under the reading timer, with music that fades out when you pause the timer and back in when you resume (you can turn this off).
 - **Calming sounds:** rain, fireplace, ocean waves, wind and soft brown noise, with sliders and presets (*Rainy evening*, *By the fire*, *Seaside*, *Deep focus*). They're generated live on your device: free, offline and never on a loop.
@@ -47,8 +52,8 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 
 **Optional AI (free):** create a Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it in **Settings → AI assistant**. The key stays in your browser and is never included in backups. Text is sent to Google only when you press an AI button, and on the free tier Google may use it to improve its products. If a model is retired, the app switches to a current one automatically.
 
-**For you — book recommendations (free, no AI, no key)**
-- A **For you** tab that learns your taste from your ratings (half stars included), what you finished or abandoned, how much you highlighted, your favourite authors, and the themes you keep writing about in reviews, notes and tags.
+**Recommendations (free, no AI, no key)**
+- A **Recommendations** tab that learns your taste from your ratings (half stars included), what you finished or abandoned, how much you highlighted, your favourite authors, and the themes you keep writing about in reviews, notes and tags.
 - It matches those against how other readers and librarians have tagged and described books on [Open Library](https://openlibrary.org) (subjects like *grief*, *country homes*, *time travel*, *dystopias*), and how many readers have it on their shelves.
 - Sections: *Top picks*, *Because you loved [book]*, *Matches what you write about*, *From authors you rate highly* and *Something different*. Every pick says why it was chosen, and you can filter by fiction, non-fiction, or under 300 pages.
 - **Want to read** adds it to your shelf, **Already read** adds it and asks for a rating, and **Not for me** asks what's off (not your kind of book, read enough like it, too long, not interested) and shows fewer like it.

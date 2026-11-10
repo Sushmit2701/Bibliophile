@@ -303,7 +303,7 @@ export function statsHTML(liveTimerMinutes = 0, { fmtDate }) {
     <section class="card st-genres">
       <div class="st-head"><h2>What you read</h2><span class="muted small">by genre</span></div>
       ${s.genres.length ? segmented(s.genres, { aria: `Genres of ${s.counted} books: ${s.genres.map(([n, c]) => `${n} ${c}`).join(', ')}`, unit: 'book' })
-        : `<p class="muted">Genres appear once your books' subjects are looked up — open <a href="#/foryou">For you</a> once.</p>`}
+        : `<p class="muted">Genres appear once your books' subjects are looked up — open <a href="#/foryou">Recommendations</a> once.</p>`}
       ${s.unknown && s.genres.length ? `<p class="muted small">${plural(s.unknown, 'book')} without genre information yet.</p>` : ''}
     </section>
 
