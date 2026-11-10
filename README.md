@@ -33,6 +33,12 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Tap **Start reading** on a book. A full-screen reading room shows the clock, and a small bar follows you around the app.
 - The timer is based on timestamps, so it keeps counting if you lock your phone or close the app. **Finish & log** fills in the minutes and asks which page you reached.
 
+**Reading room sound**
+- A **Sound** panel under the reading timer, with music that fades out when you pause the timer and back in when you resume (you can turn this off).
+- **Calming sounds:** rain, fireplace, ocean waves, wind and soft brown noise, with sliders and presets (*Rainy evening*, *By the fire*, *Seaside*, *Deep focus*). They're generated live on your device: free, offline and never on a loop.
+- **Radio:** calm free stations (SomaFM: Groove Salad, Drone Zone, Fluid, Sonic Universe; Radio Swiss Classic and Jazz) plus a search of the free [Radio Browser](https://www.radio-browser.info) directory. Save stations you like.
+- **Spotify:** paste any playlist link for a simple player. With **Spotify Premium**, connect your account (Settings → Spotify, one-time setup) to play your own playlists and search for reading playlists, with full songs. Music plays in the browser on a computer, or on your phone or any device running Spotify. Your Spotify sign-in stays in your browser and is never put in backups.
+
 **Voice, AI and sharing**
 - **Dictate** reviews, passages and notes using your browser's built-in speech recognition. It's free and needs no key. When you stop speaking, what you said is **tidied automatically**: notes and reviews become clear sentences (fillers and false starts removed, nothing added), and a passage read aloud from a book only gets punctuation, so its words stay exact. **Undo** brings back exactly what you said. The tidying uses AI if you've added a key, otherwise Chrome's built-in on-device AI where available, otherwise a basic offline clean-up that understands spoken "comma", "full stop", "question mark" and "new line". You can switch this off in Settings.
 - **✦ Tidy** turns a rambling voice note into a clean review and shows it next to your original before replacing anything. Without AI it does a basic clean-up (removes filler words and fixes capitals).

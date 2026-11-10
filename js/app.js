@@ -10,6 +10,8 @@ import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
 import * as Recs from './recs.js';
 import { statsHTML, initChartTooltips } from './stats.js';
+import * as Sound from './sound.js';
+import * as Spotify from './spotify.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
   useUploadedCover, removeCover, clearCovers, exportCovers, importCovers,
@@ -246,6 +248,8 @@ function render() {
   const due = db.items.length > 0 && !db.reviewLog[today()];
   $$('.review-dot').forEach((d) => d.hidden = !due);
   renderTimerBar(route);
+  Sound.show(route === 'timer');
+  document.body.classList.toggle('route-timer', route === 'timer');
   // Activity grids open on the most recent weeks.
   $$('.heatmap').forEach((h) => { h.scrollLeft = h.scrollWidth; });
 }
@@ -721,6 +725,30 @@ function viewSettings() {
         <label class="import-box"><b>Goodreads</b><span class="muted small">CSV from My Books → Import/Export</span><input type="file" accept=".csv" data-import="goodreads"></label>
         <label class="import-box"><b>Bibliophile backup</b><span class="muted small">.json file exported below (merges)</span><input type="file" accept=".json" data-import="json"></label>
       </div>
+    </section>
+
+    <section class="card section" id="spotify-settings">
+      <h2>Spotify <span class="muted small">optional · Premium</span></h2>
+      <p class="muted small">Play your own playlists in the reading room, with music that pauses when you pause the timer. Spotify only lets apps do this through your own free "developer app" — a one-time setup of about ten minutes:</p>
+      <ol class="setup-steps">
+        <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>, sign in with your Spotify account and accept the terms.</li>
+        <li>Click <b>Create app</b>. Name: <i>Bibliophile</i>. Description: <i>Reading room music</i>.</li>
+        <li>Under <b>Redirect URIs</b>, paste exactly this and click <b>Add</b>:
+          <div class="copy-row"><code id="sp-redirect">${esc(Spotify.redirectUri())}</code><button type="button" class="btn sm" data-action="copy-redirect">Copy</button></div></li>
+        <li>Under <b>Which API/SDKs</b>, tick <b>Web API</b> and <b>Web Playback SDK</b>, agree, and <b>Save</b>.</li>
+        <li>Open the app's <b>Settings</b>, copy the <b>Client ID</b> and paste it below. (You don't need the client secret.)</li>
+        <li>If Spotify later says your account isn't registered: in the app's <b>User Management</b>, add your name and the email of your Spotify account.</li>
+      </ol>
+      <form class="form" data-form="spotify">
+        <label>Client ID <input name="spotifyClientId" autocomplete="off" spellcheck="false" value="${esc(s.spotifyClientId || '')}" placeholder="32 letters and numbers"></label>
+        <div class="row gap wrap center-v">
+          <button class="btn">Save</button>
+          ${s.spotifyClientId ? (Spotify.isConnected()
+            ? '<span class="sp-ok">✓ Connected</span><button type="button" class="btn ghost danger" data-action="sp-disconnect">Disconnect</button>'
+            : '<button type="button" class="btn primary" data-action="sp-connect">Connect Spotify</button>') : ''}
+        </div>
+      </form>
+      <p class="muted small">Your Spotify sign-in stays in this browser and is never put in backups. Free calming sounds and radio work without any of this.</p>
     </section>
 
     <section class="card section">
@@ -1518,18 +1546,19 @@ document.addEventListener('click', async (e) => {
       location.hash = '#/timer';
       break;
     }
-    case 'timer-pause': { const t = db.timer; if (t?.startedAt) { t.elapsed += Date.now() - t.startedAt; t.startedAt = null; save(); } break; }
-    case 'timer-resume': { const t = db.timer; if (t && !t.startedAt) { t.startedAt = Date.now(); save(); } break; }
+    case 'timer-pause': { const t = db.timer; if (t?.startedAt) { t.elapsed += Date.now() - t.startedAt; t.startedAt = null; save(); Sound.onTimerPause(); } break; }
+    case 'timer-resume': { const t = db.timer; if (t && !t.startedAt) { t.startedAt = Date.now(); save(); Sound.onTimerResume(); } break; }
     case 'timer-stop': {
       const t = db.timer; if (!t) break;
       const minutes = Math.max(1, Math.round(timerMs() / 60000));
       const book = getBook(t.bookId);
       db.timer = null; save();
+      Sound.stopAll();                       // reading's done: let the music fade out
       if (book) sessionForm(book, { minutes });
       break;
     }
     case 'timer-discard':
-      if (confirm('Discard this reading session without logging it?')) { db.timer = null; save(); }
+      if (confirm('Discard this reading session without logging it?')) { db.timer = null; save(); Sound.stopAll(); }
       break;
     case 'dictate': toggleDictation(el); break;
     case 'undo-tidy': {
@@ -1592,6 +1621,9 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'go-timer': location.hash = '#/timer'; break;
+    case 'copy-redirect': await navigator.clipboard?.writeText(Spotify.redirectUri()).catch(() => {}); toast('Copied — paste it into Redirect URIs'); break;
+    case 'sp-connect': Spotify.connect().catch((err) => alert(err.message)); break;
+    case 'sp-disconnect': if (confirm('Disconnect Spotify from this browser?')) { Spotify.disconnect(); render(); toast('Spotify disconnected'); } break;
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
     case 'review':
@@ -1713,6 +1745,9 @@ document.addEventListener('submit', (e) => {
       dailyReview: Math.max(1, Number(fd.dailyReview) || 5), theme: fd.theme,
     });
     save(); applyTheme(); toast('Settings saved');
+  } else if (type === 'spotify') {
+    db.settings.spotifyClientId = (fd.spotifyClientId || '').trim();
+    save(); toast(db.settings.spotifyClientId ? 'Saved — now press Connect Spotify' : 'Client ID cleared');
   } else if (type === 'ai') {
     db.settings.geminiKey = fd.geminiKey.trim();
     db.settings.geminiModel = (fd.geminiModel || '').trim();
@@ -1741,7 +1776,11 @@ document.addEventListener('keydown', (e) => {
 // ---------- boot ----------
 applyTheme();
 initChartTooltips();
+Sound.init();
+Sound.mount($('#sound-dock'));
 render();
+Spotify.handleRedirect().then((r) => { if (!r) return; render(); toast(r.ok ? 'Spotify connected — pick a playlist in the reading room' : r.message); })
+  .catch(() => toast('Spotify sign-in failed — try again'));
 onCoverChange(render);
 loadCovers().then(() => {
   render();

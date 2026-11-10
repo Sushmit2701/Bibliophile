@@ -974,3 +974,68 @@ dialog::backdrop { background: rgba(30, 24, 18, .35); }
 .shelf-group .shelf { margin-bottom: .4rem; }
 
 .toolbar select { min-width: 11rem; }
+
+/* ---------- reading room sound ---------- */
+.sound-dock { grid-column: 2; margin: 0 clamp(1.2rem, 5vw, 4.5rem) 6rem; max-width: calc(1120px - 2 * clamp(1.2rem, 5vw, 4.5rem)); padding: 1.6rem 1.8rem; position: relative; z-index: 1; }
+body.route-timer main { padding-bottom: 2rem; }
+.snd-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.snd-head h2 { margin: 0; }
+.snd-follow { display: flex; align-items: center; gap: .45rem; font-size: .82rem; color: var(--text-soft); cursor: pointer; }
+.snd-tabs { margin-bottom: 1.3rem; }
+.snd-sub { font: 600 .7rem var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 1.4rem 0 .7rem; }
+.snd-error { color: var(--danger); font-size: .86rem; }
+.snd-last { margin-bottom: 1rem; }
+.presets { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.1rem; }
+.mixer { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .8rem 1.4rem; margin-bottom: .8rem; }
+.mix-row { display: grid; grid-template-columns: 46px 1fr; grid-template-rows: auto auto; column-gap: .9rem; align-items: center; }
+.mix-icon { grid-row: span 2; width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--surface); box-shadow: var(--raise-sm); font-size: 1.15rem; color: var(--muted); cursor: pointer; transition: box-shadow .2s, color .2s; }
+.mix-row.on .mix-icon { box-shadow: var(--inset); color: var(--accent); }
+.mix-name { font: 600 .9rem var(--sans); color: var(--text); }
+.mix-name small { display: block; font: 400 .74rem var(--sans); color: var(--muted); }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; padding: 0; border-radius: 999px; background: var(--bg); box-shadow: var(--inset); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-grad); box-shadow: 0 3px 8px -2px rgba(232, 80, 31, .6); cursor: pointer; border: 0; }
+input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--accent-fill); border: 0; cursor: pointer; }
+.stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .8rem; }
+.station { display: flex; align-items: center; gap: .8rem; padding: .7rem .9rem; border-radius: 16px; background: var(--surface); box-shadow: var(--raise-sm); }
+.station.on { box-shadow: var(--inset); }
+.st-play { width: 40px; height: 40px; border-radius: 50%; border: 0; flex-shrink: 0; cursor: pointer; background: var(--surface); box-shadow: var(--raise-sm); color: var(--text-soft); font-size: .8rem; }
+.station.on .st-play { background: var(--accent-grad); color: #fff; box-shadow: var(--accent-glow); }
+.st-text { min-width: 0; flex: 1; }
+.st-text b { display: block; font: 600 .9rem var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-text small { display: block; font-size: .74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.snd-search { margin: 1.2rem 0 .8rem; }
+.snd-search input { flex: 1; }
+.snd-vol { margin: 1rem 0 .4rem; flex-wrap: wrap; }
+.snd-vol input[type=range] { max-width: 260px; }
+.sp-connect { padding: 1.1rem 1.2rem; border-radius: 18px; box-shadow: var(--inset); margin-bottom: .6rem; }
+.sp-connect p { margin-bottom: .9rem; }
+.sp-embed-wrap { margin-top: .6rem; }
+.sp-embed { width: 100%; border: 0; border-radius: 14px; display: block; }
+.sp-now { display: flex; align-items: center; gap: 1rem; padding: .9rem 1rem; border-radius: 18px; box-shadow: var(--inset); }
+.sp-now img, .sp-noimg.big { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; box-shadow: var(--shadow-book); flex-shrink: 0; }
+.sp-noimg { display: grid; place-items: center; background: var(--surface-2); color: var(--muted); border-radius: 8px; }
+.sp-now-text { flex: 1; min-width: 0; }
+.sp-now-text b { display: block; font: 600 1rem var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-now-text small { color: var(--muted); font-size: .8rem; }
+.sp-controls { display: flex; gap: .5rem; }
+.mini-btn { width: 42px; height: 42px; border-radius: 50%; border: 0; cursor: pointer; background: var(--surface); box-shadow: var(--raise-sm); color: var(--text-soft); }
+.mini-btn.play { width: 50px; height: 50px; background: var(--accent-grad); color: #fff; box-shadow: var(--accent-glow); }
+.sp-devices { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0; }
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: .9rem; }
+.sp-item { border: 0; background: var(--surface); box-shadow: var(--raise-sm); border-radius: 16px; padding: .6rem; text-align: left; cursor: pointer; color: var(--text); display: grid; gap: .35rem; font: inherit; }
+.sp-item:hover { box-shadow: var(--raise); }
+.sp-item img, .sp-item .sp-noimg { width: 100%; aspect-ratio: 1; border-radius: 10px; object-fit: cover; }
+.sp-item span { font: 600 .8rem/1.25 var(--sans); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sp-item small { font-size: .7rem; color: var(--muted); }
+.setup-steps { padding-left: 1.2rem; display: grid; gap: .45rem; font-size: .9rem; color: var(--text-soft); margin: .4rem 0 1rem; }
+.copy-row { display: flex; gap: .6rem; align-items: center; margin-top: .35rem; flex-wrap: wrap; }
+.copy-row code { font-size: .82rem; background: var(--surface-2); border-radius: 8px; padding: .35rem .6rem; word-break: break-all; }
+.sp-ok { color: #1f8a4c; font-weight: 600; font-size: .9rem; }
+@media (max-width: 760px) {
+  .sound-dock { grid-column: 1; margin: 0 1rem 7rem; max-width: none; padding: 1.2rem; }
+  .sp-now { flex-wrap: wrap; }
+}
+
+/* the sidebar spans the page and the sound panel row, so it stays put while scrolling */
+@media (min-width: 761px) { .nav { grid-row: 1 / span 2; } }
+.mix-name small { margin-bottom: .2rem; }
