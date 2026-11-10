@@ -61,14 +61,15 @@ const listeners = new Set();
 
 export function onChange(fn) { listeners.add(fn); }
 
-export function save() {
+// quiet: store without redrawing the page (for background bookkeeping like AI usage counts).
+export function save({ quiet = false } = {}) {
   db.updatedAt = new Date().toISOString();
   try {
     localStorage.setItem(KEY, JSON.stringify(db));
   } catch (e) {
     alert('Could not save — storage may be full. Please export a backup. ' + e.message);
   }
-  listeners.forEach((fn) => fn());
+  if (!quiet) listeners.forEach((fn) => fn());
 }
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

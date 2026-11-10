@@ -6,7 +6,7 @@ import {
 } from './store.js';
 import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
-import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate, reelTemplate, aiCaption, aiReel, DEFAULT_MODEL } from './ai.js';
+import { hasAI, testKey, tidyLocally, tidyReview, tidyDictation, captionTemplate, reelTemplate, aiCaption, aiReel, aiUsage, resetTimeLocal } from './ai.js';
 import { yearCard, yearsWithReading, YEAR_THEMES } from './yearcard.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
@@ -730,10 +730,14 @@ function viewSettings() {
       <h2>AI assistant <span class="muted small">optional</span></h2>
       <p class="muted small">Used to tidy what you dictate (notes and reviews become clear sentences; passages read from a book only get punctuation), for <b>Tidy with AI</b> on reviews and <b>Create a post</b> (captions and reel scripts). It uses Google's Gemini, which has a free tier: get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (sign in with Google, click <i>Create API key</i>), then paste it here.</p>
       <p class="muted small">The key is stored only in this browser and is never included in backups. Text is sent to Google only when you press an AI button. On the free tier, Google may use what you send to improve its products — don't send anything private.</p>
+      <p class="muted small"><b>It's free:</b> you can't be charged unless you add a card (billing) to your Google project yourself. Google's free allowance is small and changes often — roughly a few hundred requests a day on the "Lite" models the app uses. When it runs out, the app carries on without AI until it resets.</p>
       <form class="form" data-form="ai">
         <label>Gemini API key <input name="geminiKey" type="password" autocomplete="off" value="${esc(s.geminiKey || '')}" placeholder="AIza…"></label>
         <label class="check"><input type="checkbox" name="autoTidy" ${s.autoTidy !== false ? 'checked' : ''}> Tidy dictation automatically when I stop speaking</label>
-        <label>Model <input name="geminiModel" value="${esc(s.geminiModel || '')}" placeholder="${DEFAULT_MODEL} (picked automatically if retired)"></label>
+        ${s.geminiKey ? (() => { const u = aiUsage(); return `<p class="ai-usage">${u.model ? `Using <b>${esc(u.model)}</b> · ` : ''}${plural(u.today, 'AI request')} today · free allowance resets around ${resetTimeLocal()}</p>`; })() : ''}
+        <details class="advanced"><summary>Advanced</summary>
+          <label>Model <input name="geminiModel" value="${esc(s.geminiModelManual ? s.geminiModel || '' : '')}" placeholder="leave empty — the app picks the free model with the biggest allowance"></label>
+        </details>
         <div class="row gap wrap">
           <button class="btn primary">Save key</button>
           <button type="button" class="btn" data-action="test-ai">Test it</button>
@@ -850,8 +854,10 @@ let lastTidy = null; // so "Undo" can put back exactly what was said
 function toggleDictation(btn) {
   if (rec) { rec.stop(); return; }
   const scope = btn.closest('dialog') || document;
-  const target = $(btn.dataset.target, scope);
+  let target = $(btn.dataset.target, scope);
   if (!target) return;
+  // The page can redraw while you speak (e.g. a cover finishing downloading): always write into the live box.
+  const liveBox = () => (target.isConnected ? target : (target = $(btn.dataset.target, btn.closest('dialog') || document) || target));
   const status = btn.parentElement.querySelector('.interim');
   const label = btn.innerHTML;
   const before = target.value;   // what was already in the box
@@ -864,7 +870,11 @@ function toggleDictation(btn) {
     let live = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const r = ev.results[i];
-      if (r.isFinal) { spoken = joinText(spoken, r[0].transcript.trim()); target.value = joinText(before, spoken); }
+      if (r.isFinal) {
+        spoken = joinText(spoken, r[0].transcript.trim());
+        liveBox().value = joinText(before, spoken);
+        target.dispatchEvent(new Event('input', { bubbles: true })); // keeps the draft current
+      }
       else live += r[0].transcript;
     }
     if (status) status.textContent = live;
@@ -873,8 +883,9 @@ function toggleDictation(btn) {
   rec.onend = () => {
     rec = null; btn.classList.remove('on'); btn.innerHTML = label;
     if (status) status.textContent = '';
-    target.dispatchEvent(new Event('input', { bubbles: true }));
-    if (spoken.trim() && db.settings.autoTidy !== false) tidyAfterDictation(target, before, spoken, btn.dataset.mode || 'note', status);
+    liveBox().dispatchEvent(new Event('input', { bubbles: true }));
+    const liveStatus = status?.isConnected ? status : target.closest('form, .review-box')?.querySelector('.interim') || status;
+    if (spoken.trim() && db.settings.autoTidy !== false) tidyAfterDictation(target, before, spoken, btn.dataset.mode || 'note', liveStatus);
   };
   rec.start();
   btn.classList.add('on');
@@ -882,11 +893,15 @@ function toggleDictation(btn) {
 }
 
 async function tidyAfterDictation(target, before, spoken, mode, status) {
+  const targetId = target.id, targetName = target.name;
   const form = target.closest('form');
   const bookId = form?.bookId?.value || target.dataset.book || '';
   const bookTitle = getBook(bookId)?.title || '';
   if (status) status.textContent = mode === 'passage' ? 'Adding punctuation…' : 'Tidying…';
-  const { text, via } = await tidyDictation(spoken, mode, bookTitle);
+  const { text, via, reason } = await tidyDictation(spoken, mode, bookTitle);
+  // If the page was redrawn meanwhile, the box is a new element — find it again.
+  if (!target.isConnected) target = (targetId && document.getElementById(targetId)) || (targetName && $(`dialog [name="${targetName}"]`)) || target;
+  if (status && !status.isConnected) status = target.closest('form, .review-box')?.querySelector('.interim') || null;
   // If you kept typing meanwhile, don't overwrite anything.
   if (target.value !== joinText(before, spoken) || !text) { if (status) status.textContent = ''; return; }
   target.value = joinText(before, text);
@@ -894,7 +909,7 @@ async function tidyAfterDictation(target, before, spoken, mode, status) {
   if (target.tagName === 'TEXTAREA') target.rows = Math.min(12, Math.max(target.rows, target.value.split('\n').length + 1, Math.ceil(target.value.length / 70) + 1));
   lastTidy = { target, before, spoken, text };
   const how = via === 'ai' ? 'Tidied with AI' : via === 'device' ? 'Tidied on this device' : mode === 'passage' ? 'Punctuation added' : 'Basic tidy';
-  if (status) status.innerHTML = `<span class="tidy-done">✓ ${how}</span> <button type="button" class="link-btn" data-action="undo-tidy">Undo</button>${via === 'basic' && !hasAI() && mode !== 'passage' && !target.closest('dialog') ? ' <a href="#/settings" class="small">Better tidying →</a>' : ''}`;
+  if (status) status.innerHTML = `<span class="tidy-done">✓ ${how}</span> <button type="button" class="link-btn" data-action="undo-tidy">Undo</button>${reason && via !== 'ai' ? ` <span class="ai-why" title="${esc(reason)}">· AI not used: ${esc(reason.split(/(?<=\.)\s/)[0])}</span>` : ''}${via === 'basic' && !hasAI() && mode !== 'passage' && !target.closest('dialog') ? ' <a href="#/settings" class="small">Better tidying →</a>' : ''}`;
 }
 
 // ============ TIDY A REVIEW ============
@@ -906,7 +921,7 @@ async function tidyFlow(book, btn) {
     const label = btn.textContent;
     btn.disabled = true; btn.textContent = 'Tidying…';
     try { tidied = await tidyReview(original, book); }
-    catch (err) { toast('AI unavailable — did a basic tidy instead'); console.warn(err); viaAI = false; }
+    catch (err) { toast(`${err.message} — did a basic tidy instead`); viaAI = false; }
     btn.disabled = false; btn.textContent = label;
   }
   if (!tidied) tidied = tidyLocally(original);
@@ -1417,7 +1432,7 @@ document.addEventListener('click', async (e) => {
       const key = $('form[data-form=ai] [name=geminiKey]').value.trim();
       if (!key) { toast('Paste a key first'); break; }
       el.disabled = true; el.textContent = 'Testing…';
-      try { const model = await testKey(key); db.settings.geminiKey = key; db.settings.geminiModel = model; save(); toast(`It works — using ${model}`); }
+      try { const model = await testKey(key); db.settings.geminiKey = key; save(); toast(`It works — using ${model}`); }
       catch (err) { alert('That key did not work: ' + err.message); el.disabled = false; el.textContent = 'Test it'; }
       break;
     }
@@ -1558,7 +1573,8 @@ document.addEventListener('submit', (e) => {
     save(); applyTheme(); toast('Settings saved');
   } else if (type === 'ai') {
     db.settings.geminiKey = fd.geminiKey.trim();
-    db.settings.geminiModel = fd.geminiModel.trim();
+    db.settings.geminiModel = (fd.geminiModel || '').trim();
+    db.settings.geminiModelManual = !!db.settings.geminiModel;
     db.settings.autoTidy = !!fd.autoTidy;
     save(); toast(db.settings.geminiKey ? 'Key saved — press “Test it” to check it' : 'Key cleared');
   }

@@ -599,3 +599,7 @@ dialog.nudge { animation: nudge .38s ease; }
 .unsaved-note { font: italic .9rem var(--serif); color: var(--accent); margin: -.4rem 0 .8rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 .tidy-done { font: italic .95rem var(--serif); color: var(--text-soft); margin-right: .5rem; }
 .interim .link-btn { margin-left: .2rem; }
+.ai-usage { font: italic .95rem var(--serif); color: var(--text-soft); margin: 0; }
+.advanced summary { cursor: pointer; font: 600 .62rem var(--sans); text-transform: uppercase; letter-spacing: .16em; color: var(--muted); }
+.advanced[open] summary { margin-bottom: .8rem; }
+.ai-why { font: italic .85rem var(--serif); color: var(--muted); }

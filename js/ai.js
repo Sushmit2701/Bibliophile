@@ -4,9 +4,46 @@
 import { db, save, getBook, itemsForBook, fmtRating, STATUSES } from './store.js';
 
 const API = 'https://generativelanguage.googleapis.com/v1beta';
-export const DEFAULT_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_MODEL = 'chosen automatically';
+// Used only if Google's model list can't be read. "Lite" models have by far the biggest free allowance.
+const FALLBACK_MODELS = ['gemini-flash-lite-latest', 'gemini-2.5-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash'];
 
 export const hasAI = () => !!db.settings.geminiKey;
+
+// Google's free limits reset at midnight Pacific time.
+const pacificDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+export function resetTimeLocal() {
+  const now = new Date();
+  const la = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const offset = la - now;
+  const next = new Date(la); next.setHours(24, 0, 0, 0);
+  return new Date(next - offset).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+export function aiUsage() {
+  const u = db.settings.geminiUsage;
+  return { today: u && u.day === pacificDay() ? u.n : 0, model: db.settings.geminiModelManual ? db.settings.geminiModel : db.settings.geminiAuto || '' };
+}
+function countUse() {
+  const day = pacificDay();
+  const u = db.settings.geminiUsage;
+  db.settings.geminiUsage = { day, n: u && u.day === day ? u.n + 1 : 1 };
+}
+
+// Read Google's error: which limit was hit, whether that model's free limit is zero, when to retry.
+function quotaInfo(data) {
+  const msg = data?.error?.message || '';
+  const details = data?.error?.details || [];
+  const violations = details.flatMap((d) => d.violations || []);
+  const ids = violations.map((v) => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ') + ' ' + msg;
+  const retryRaw = details.find((d) => d.retryDelay)?.retryDelay || (msg.match(/retry in ([\d.]+)\s*s/i) || [])[1];
+  return {
+    zero: /limit:\s*0\b/.test(msg) || violations.some((v) => String(v.quotaValue) === '0'),
+    daily: /per\s?day|PerDay/i.test(ids),
+    minute: /per\s?minute|PerMinute/i.test(ids),
+    retry: retryRaw ? Math.ceil(parseFloat(retryRaw)) : null,
+  };
+}
 
 async function call(model, prompt, key) {
   const res = await fetch(`${API}/models/${model}:generateContent`, {
@@ -15,49 +52,96 @@ async function call(model, prompt, key) {
     body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7 } }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { const err = new Error(data.error?.message || `Gemini error ${res.status}`); err.status = res.status; throw err; }
+  if (!res.ok) {
+    const err = new Error(data.error?.message || `Gemini error ${res.status}`);
+    err.status = res.status;
+    if (res.status === 429) err.quota = quotaInfo(data);
+    throw err;
+  }
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
   if (!text) throw new Error('The AI returned an empty answer (it may have been blocked). Try again.');
   return text;
 }
 
-// If the saved model name has been retired, find a current "flash" model automatically.
-async function pickModel(key) {
-  const res = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } });
-  const data = await res.json();
-  const names = (data.models || [])
-    .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
-    .map((m) => m.name.replace('models/', ''))
-    .filter((n) => /flash/.test(n) && !/(lite|image|tts|audio|live|exp|preview|thinking)/.test(n))
-    .sort().reverse();
-  return names[0];
+// Which models this key can use, best free allowance first: Flash-Lite, then Flash.
+const SKIP = /(image|tts|audio|live|exp|preview|thinking|embedding|native|computer|robotics|vision|aqa|gemma|learnlm|nano|banana|pro)/i;
+function rankModels(names) {
+  const score = (n) => {
+    if (!/flash/.test(n) || SKIP.test(n)) return -1;
+    let s = /flash-lite/.test(n) ? 1000 : 500;
+    if (/latest$/.test(n)) s += 100;
+    s += parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0) * 10;
+    return s;
+  };
+  return [...new Set(names)].filter((n) => score(n) > 0).sort((a, b) => score(b) - score(a));
+}
+async function listModels(key) {
+  const cache = db.settings.geminiModels;
+  if (cache && cache.key === key.slice(-6) && Date.now() - cache.at < 7 * 864e5) return cache.names;
+  try {
+    const res = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } });
+    if (!res.ok) return FALLBACK_MODELS;
+    const data = await res.json();
+    const names = rankModels((data.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace('models/', '')));
+    if (!names.length) return FALLBACK_MODELS;
+    db.settings.geminiModels = { at: Date.now(), key: key.slice(-6), names };
+    save({ quiet: true });
+    return names;
+  } catch { return FALLBACK_MODELS; }
 }
 
-export async function ask(prompt) {
-  const key = db.settings.geminiKey;
+function friendly(e) {
+  if (e.status === 400 && /api key/i.test(e.message)) return new Error('That key isn’t valid — copy it again from aistudio.google.com/apikey.');
+  if (e.status === 403) return new Error('This key isn’t allowed to use the Gemini API. Create a new key in AI Studio (aistudio.google.com/apikey).');
+  return e;
+}
+
+// Ask Gemini. Tries the best free model; if Google says that model has no free allowance (limit 0)
+// or today's allowance is used up, it moves to the next free model — each model has its own allowance.
+export async function ask(prompt, key = db.settings.geminiKey) {
   if (!key) throw new Error('Add a free Gemini API key in Settings to use AI.');
-  const model = db.settings.geminiModel || DEFAULT_MODEL;
-  try {
-    return await call(model, prompt, key);
-  } catch (e) {
-    if (e.status !== 404) throw e;
-    const next = await pickModel(key);
-    if (!next || next === model) throw e;
-    db.settings.geminiModel = next; save();
-    return call(next, prompt, key);
+  const st = db.settings;
+  const day = pacificDay();
+  st.geminiSpent = Object.fromEntries(Object.entries(st.geminiSpent || {}).filter(([, d]) => d === day || d.startsWith('zero:') && Date.now() - Number(d.slice(5)) < 7 * 864e5));
+  const spent = (m) => !!st.geminiSpent[m];
+  let candidates = st.geminiModelManual && st.geminiModel ? [st.geminiModel]
+    // Always in order of free allowance, so the app returns to the generous model once its allowance resets.
+    : (await listModels(key)).filter((m) => !spent(m));
+  candidates = candidates.slice(0, 5);
+  let sawDaily = false, lastErr = null;
+  for (const model of candidates) {
+    try {
+      const out = await call(model, prompt, key);
+      if (!st.geminiModelManual) st.geminiAuto = model;
+      countUse(); save({ quiet: true });
+      return out;
+    } catch (e) {
+      lastErr = e;
+      if (e.status === 404) continue;                                   // retired model name
+      if (e.status === 429 && e.quota?.minute && !e.quota.zero && !e.quota.daily) {
+        save({ quiet: true });
+        throw new Error(`Google’s free tier only allows a few requests a minute. Try again in ${e.quota.retry || 60} seconds.`);
+      }
+      if (e.status === 429) {                                           // daily allowance used, or no free allowance
+        st.geminiSpent[model] = e.quota?.zero ? `zero:${Date.now()}` : day;
+        if (!e.quota?.zero) sawDaily = true;
+        continue;
+      }
+      save({ quiet: true });
+      throw friendly(e);
+    }
   }
+  save({ quiet: true });
+  if (sawDaily || (lastErr && lastErr.status === 429)) {
+    throw new Error(`Today’s free AI allowance on your key is used up. It resets around ${resetTimeLocal()} your time. Everything else keeps working; dictation uses the basic tidy until then.`);
+  }
+  throw friendly(lastErr || new Error('No Gemini model is available for this key.'));
 }
 
 export async function testKey(key) {
-  const model = db.settings.geminiModel || DEFAULT_MODEL;
-  try { await call(model, 'Reply with the single word: ready', key); return model; }
-  catch (e) {
-    if (e.status !== 404) throw e;
-    const next = await pickModel(key);
-    if (!next) throw e;
-    await call(next, 'Reply with the single word: ready', key);
-    return next;
-  }
+  const before = db.settings.geminiAuto;
+  await ask('Reply with the single word: ready', key);
+  return (db.settings.geminiModelManual && db.settings.geminiModel) || db.settings.geminiAuto || before;
 }
 
 // ---------- Voice-note tidying ----------
@@ -131,12 +215,13 @@ Return only the tidied note.
 // Returns { text, via } — via is 'ai' (Gemini), 'device' (Chrome on-device) or 'basic'.
 export async function tidyDictation(text, mode = 'note', bookTitle = '') {
   const prompt = dictationPrompt(text, mode, bookTitle);
+  let reason = '';
   if (hasAI()) {
-    try { return { text: (await ask(prompt)).replace(/^"+|"+$/g, '').trim(), via: 'ai' }; } catch { /* fall through */ }
+    try { return { text: (await ask(prompt)).replace(/^"+|"+$/g, '').trim(), via: 'ai' }; } catch (e) { reason = e.message; }
   }
   const local = await onDeviceAI(prompt);
-  if (local) return { text: local.replace(/^"+|"+$/g, '').trim(), via: 'device' };
-  return { text: tidyLocally(text, mode), via: 'basic' };
+  if (local) return { text: local.replace(/^"+|"+$/g, '').trim(), via: 'device', reason };
+  return { text: tidyLocally(text, mode), via: 'basic', reason };
 }
 
 export async function tidyReview(text, book) {
