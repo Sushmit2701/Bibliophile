@@ -237,3 +237,73 @@ export async function importCovers(map, { overwrite = false } = {}) {
   }
   return n;
 }
+
+// ---------- choosing a cover yourself ----------
+// Every edition of a book on Open Library has its own cover, and Google Books has several more.
+const olFetch = async (url) => {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+  try { const r = await fetch(url, { signal: ctl.signal }); return r.ok ? await r.json() : null; }
+  catch { return null; } finally { clearTimeout(t); }
+};
+
+export async function editionCovers(book) {
+  let work = book.ol?.key?.startsWith('/works/') ? book.ol.key : '';
+  if (!work) {
+    const q = new URL('https://openlibrary.org/search.json');
+    const isbn = (book.isbn || '').replace(/[^0-9X]/gi, '');
+    if (isbn) q.searchParams.set('isbn', isbn);
+    else {
+      q.searchParams.set('title', book.title || '');
+      if (book.author) q.searchParams.set('author', book.author.split(/[,&]| and /)[0].trim());
+    }
+    q.searchParams.set('fields', 'key,title'); q.searchParams.set('limit', '1');
+    work = (await olFetch(q.toString()))?.docs?.[0]?.key || '';
+  }
+  if (!work) return [];
+  const data = await olFetch(`https://openlibrary.org${work}/editions.json?limit=40`);
+  const found = [];
+  for (const e of data?.entries || []) {
+    const label = [e.publish_date, (e.languages || [])[0]?.key?.split('/').pop()].filter(Boolean).join(' · ');
+    for (const id of e.covers || []) if (id > 0 && !found.some((x) => x.id === id)) found.push({ id, label });
+  }
+  return found.slice(0, 30).map((x) => ({
+    large: `https://covers.openlibrary.org/b/id/${x.id}-L.jpg`,
+    thumb: `https://covers.openlibrary.org/b/id/${x.id}-M.jpg`,
+    label: x.label || 'Edition',
+  }));
+}
+
+export async function googleCoverOptions(book) {
+  const qs = [];
+  const isbn = (book.isbn || '').replace(/[^0-9X]/gi, '');
+  if (isbn) qs.push(`isbn:${isbn}`);
+  if (book.title) qs.push(`intitle:${book.title.replace(/[:(].*$/, '').trim()}${book.author ? ` inauthor:${book.author.split(/[,&]| and /)[0].trim()}` : ''}`);
+  const out = []; const seen = new Set();
+  for (const q of qs) {
+    try {
+      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=12&printType=books&fields=items(volumeInfo(title,publishedDate,imageLinks))`);
+      if (!res.ok) continue;
+      for (const i of (await res.json()).items || []) {
+        const l = i.volumeInfo?.imageLinks;
+        const raw = l?.thumbnail || l?.smallThumbnail;
+        if (!raw) continue;
+        const url = raw.replace(/^http:/, 'https:').replace(/&edge=curl/, '').replace(/zoom=\d/, 'zoom=1') + '&fife=w500';
+        const key = url.replace(/&fife=.*$/, '');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ url, label: [i.volumeInfo.title, (i.volumeInfo.publishedDate || '').slice(0, 4)].filter(Boolean).join(' · ') });
+      }
+    } catch { /* try the next search */ }
+  }
+  return out.slice(0, 16);
+}
+
+// Save a cover picked from a web address (or an option above). Same path as automatic covers:
+// downloaded once, shrunk, stored in the app, so it works offline.
+export async function coverFromUrl(book, url) {
+  const blob = await shrink(await fetchImage(url));
+  await putBlob(book.id, blob);
+  book.cover = url;
+  delete book.coverMissingAt;
+  save();
+}

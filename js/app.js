@@ -15,6 +15,7 @@ import * as Spotify from './spotify.js';
 import {
   loadCovers, onCoverChange, coverSrc, hasSavedCover, savedCoverCount, ensureCover, ensureAll,
   useUploadedCover, removeCover, clearCovers, exportCovers, importCovers,
+  editionCovers, googleCoverOptions, coverFromUrl,
 } from './covers.js';
 
 // ---------- helpers ----------
@@ -514,7 +515,7 @@ function viewBook(id) {
     <section class="book-head">
       <div class="cover-col">
         ${cover(b, 'lg')}
-        ${hasSavedCover(b.id) ? '' : `<button class="link-btn" data-action="find-cover" data-id="${b.id}">${b.cover ? 'Save cover offline' : 'Find the cover'}</button>`}
+        <button class="link-btn" data-action="change-cover" data-id="${b.id}">${hasSavedCover(b.id) ? 'Change cover' : 'Choose a cover'}</button>
       </div>
       <div class="grow">
         <h1>${esc(b.title)}</h1>
@@ -911,6 +912,53 @@ function renderTimerBar(route) {
     ${t.focus && t.focus.phase !== 'read' ? '<button class="link-btn" data-action="focus-skip">Keep reading</button>'
       : t.startedAt ? '<button class="link-btn" data-action="timer-pause">Pause</button>' : '<button class="link-btn" data-action="timer-resume">Resume</button>'}
     <button class="link-btn" data-action="timer-stop">Done</button>`;
+}
+
+// ============ CHOOSE A COVER ============
+function coverPicker(book) {
+  if (!book) return;
+  const search = encodeURIComponent(`${book.title} ${book.author || ''} book cover`);
+  openModal(`
+    <h2>Choose a cover</h2>
+    <p class="muted small">${esc(book.title)}${book.author ? ` — ${esc(book.author)}` : ''}. Pick one and it's saved in this app, so it works offline.</p>
+    <div class="cp-actions">
+      <button type="button" class="btn sm" data-action="cp-auto" data-id="${esc(book.id)}">Look for it automatically</button>
+      <a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/search?tbm=isch&q=${search}">Search Google Images ↗</a>
+    </div>
+    <h3 class="cp-h">Editions on Open Library</h3>
+    <div class="cp-grid" id="cp-ol"><p class="muted small">Looking…</p></div>
+    <h3 class="cp-h">Google Books</h3>
+    <div class="cp-grid" id="cp-gb"><p class="muted small">Looking…</p></div>
+    <form class="cp-url" data-form="cover-url">
+      <input type="hidden" name="id" value="${esc(book.id)}">
+      <label>Or paste a picture's address <input name="url" type="url" placeholder="https://…" required></label>
+      <button class="btn sm">Use this picture</button>
+    </form>
+    <label class="cp-up">Or upload a photo of your copy
+      <input type="file" accept="image/*" data-cover-upload="${esc(book.id)}">
+    </label>`, (root) => {
+    const tile = (url, thumb, label) => `<button type="button" class="cp-opt" data-action="cp-pick" data-id="${esc(book.id)}" data-url="${esc(url)}" title="${esc(label)}">
+      <img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.closest('.cp-opt').remove()"><small>${esc(label || 'Cover')}</small></button>`;
+    const olBox = $('#cp-ol', root), gbBox = $('#cp-gb', root);
+    editionCovers(book).then((list) => {
+      olBox.innerHTML = list.length ? list.map((c) => tile(c.large, c.thumb, c.label)).join('') : '<p class="muted small">No other editions found on Open Library.</p>';
+    });
+    googleCoverOptions(book).then((list) => {
+      gbBox.innerHTML = list.length ? list.map((c) => tile(c.url, c.url, c.label)).join('') : '<p class="muted small">Nothing on Google Books for this title.</p>';
+    });
+  });
+}
+
+async function saveChosenCover(book, url) {
+  if (!book || !url) return;
+  toast('Saving the cover…');
+  try {
+    await coverFromUrl(book, url);
+    closeModal();
+    toast('Cover saved');
+  } catch {
+    toast('That picture couldn’t be used — try another');
+  }
 }
 
 function viewTimer() {
@@ -1636,6 +1684,13 @@ document.addEventListener('click', async (e) => {
       db.lastBackup = new Date().toISOString(); save();
       break;
     }
+    case 'change-cover': coverPicker(getBook(id)); break;
+    case 'cp-pick': saveChosenCover(getBook(id), el.dataset.url); break;
+    case 'cp-auto': {
+      const b = getBook(id);
+      ensureCover(b, { force: true }).then((r) => { closeModal(); toast(r === 'none' ? 'No cover found automatically — try the options' : 'Cover saved'); });
+      break;
+    }
     case 'find-cover': {
       const b = getBook(id);
       el.disabled = true; el.textContent = 'Looking…';
@@ -1777,6 +1832,11 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', async (e) => {
   const el = e.target;
+  if (el.dataset.coverUpload) {
+    const f = el.files?.[0];
+    if (f) useUploadedCover(getBook(el.dataset.coverUpload), f).then(() => { closeModal(); toast('Cover saved'); }).catch(() => toast('Couldn’t read that image'));
+    return;
+  }
   if (el.dataset.change) {
     ui[el.dataset.change] = el.value;
     if (el.dataset.change === 'libSort') { db.settings.libSort = el.value; save({ quiet: true }); } // remember how you like the library arranged
@@ -1881,6 +1941,8 @@ document.addEventListener('submit', (e) => {
       dailyReview: Math.max(1, Number(fd.dailyReview) || 5), theme: fd.theme,
     });
     save(); applyTheme(); toast('Settings saved');
+  } else if (type === 'cover-url') {
+    saveChosenCover(getBook(fd.id), (fd.url || '').trim());
   } else if (type === 'spotify') {
     db.settings.spotifyClientId = (fd.spotifyClientId || '').trim();
     save(); toast(db.settings.spotifyClientId ? 'Saved — now press Connect Spotify' : 'Client ID cleared');
