@@ -74,7 +74,7 @@ No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (
 
 **Account & sync (optional)**
 - Personal mode is the default: no account, nothing leaves your device, and the sync code isn't even loaded.
-- Turn on sync in **Settings → Account & sync** to keep your phone and computer in step. Sign in with Google or with a code sent by email. Setup takes about 15 minutes, once: see [SYNC_SETUP.md](SYNC_SETUP.md).
+- Turn on sync in **Settings → Account & sync** to keep your phone and computer in step. Sign in with Google or with a link sent by email. Setup takes about 15 minutes, once: see [SYNC_SETUP.md](SYNC_SETUP.md).
 - **How syncing behaves:**
   - Changes sync in the background, and offline changes go up later.
   - Edits to different parts of the same book on two devices are both kept. Otherwise, the most recent change wins.

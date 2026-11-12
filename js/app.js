@@ -900,14 +900,14 @@ function accountSection() {
   if (!st.configured) return `<section class="card section" id="account">${head}${setup}</section>`;
   const signin = st.pendingEmail
     ? `<form class="form" data-form="cloud-code">
-        <p class="muted small">We've emailed a sign-in code to <b>${esc(st.pendingEmail)}</b>. Type it here, or tap the link in the email on this device.</p>
-        <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" autofocus></label>
+        <p class="muted small">We've emailed a sign-in link to <b>${esc(st.pendingEmail)}</b>. Open the email on this device and tap <b>Sign in</b>. If the email also shows a code, you can type it here instead.</p>
+        <label>Code <span class="muted small">if your email has one</span> <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" autofocus></label>
         <div class="row gap wrap"><button class="btn primary">Sign in</button><button type="button" class="btn ghost" data-action="cloud-email-cancel">Use a different email</button></div>
       </form>`
     : `${st.google ? '<button class="btn google-btn" data-action="cloud-google"><span class="g">G</span> Continue with Google</button><p class="or-line muted small">or</p>' : ''}
       <form class="form" data-form="cloud-email">
         <label>Email <input name="email" type="email" autocomplete="email" placeholder="you@example.com"></label>
-        <div class="row gap wrap"><button class="btn primary">Email me a sign-in code</button></div>
+        <div class="row gap wrap"><button class="btn primary">Email me a sign-in link</button></div>
       </form>`;
   return `<section class="card section" id="account">${head}
     <p class="mode-line"><span class="mode-dot"></span><b>Personal mode</b> · sign in to start syncing.</p>
@@ -2316,8 +2316,8 @@ document.addEventListener('submit', (e) => {
     render();
   } else if (type === 'cloud-email') {
     const btn = $('button.primary', form); btn.disabled = true; btn.textContent = 'Sending…';
-    Cloud.sendEmailCode(fd.email).then(() => toast('Code sent — check your email'))
-      .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Email me a sign-in code'; });
+    Cloud.sendEmailCode(fd.email).then(() => toast('Sent — check your email'))
+      .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Email me a sign-in link'; });
   } else if (type === 'cloud-code') {
     const btn = $('button.primary', form); btn.disabled = true; btn.textContent = 'Signing in…';
     Cloud.verifyEmailCode(fd.code).then((r) => { toast(`Signed in as ${r.email} — syncing your library`); render(); afterSignIn(); })

@@ -35,20 +35,28 @@ Open **Authentication → URL Configuration**:
 - **Redirect URLs:** add your app address followed by `**`, for example `https://sushmit2701.github.io/bibliophile/**`.
   - If you also run the app on your computer, add `http://localhost:8000/**` too.
 
-## 4. Let the sign-in email include a code (2 min)
+## 4. Email sign-in: nothing to do yet
 
-Signing in by email sends a link. On a phone, that link often opens in your email app's own browser rather than in the installed Bibliophile app, so a typed code is easier.
+Email sign-in works straight away: the app sends a link, and you tap **Sign in** in the email.
 
-1. Open **Authentication → Emails** (it may be called *Email Templates*) and choose the **Magic link** template.
-2. Add this line to the message body, for example just above the link:
+- **Android:** open the link in Chrome, so it signs in the installed app.
+- **iPhone:** the link opens in Safari, which can't sign in the app on your home screen, so use **Continue with Google** (step 5) instead.
 
-   ```html
-   <p>Your Bibliophile code: <strong>{{ .Token }}</strong></p>
-   ```
-
-3. Click **Save**.
-
-> **Email limits.** Supabase's built-in email sender is for testing and only sends a few emails an hour. That's fine for you alone, especially once you're signed in on each device. Before inviting friends, connect a free email service such as [Resend](https://resend.com) under **Authentication → Emails → SMTP settings**. Google sign-in has no such limit.
+> **Before inviting friends, set up an email service (10 min).** Supabase's built-in sender only sends a few emails an hour, and it doesn't let you change the email. A free [Resend](https://resend.com) account fixes both:
+>
+> 1. Sign up at resend.com.
+> 2. Under **API Keys**, create a key.
+> 3. In Supabase, open **Authentication → Emails → SMTP settings** (the **Set up SMTP** button), turn on custom SMTP, and enter:
+>    - Host: `smtp.resend.com`
+>    - Port: `465`
+>    - Username: `resend`
+>    - Password: your API key
+>    - Sender: `onboarding@resend.dev` until you add your own domain in Resend
+> 4. The **Magic link or OTP** template is now editable. Add this line to the body, so people can type a code instead of tapping the link (handy on iPhone):
+>
+>    ```html
+>    <p>Your Bibliophile code: <strong>{{ .Token }}</strong></p>
+>    ```
 
 ## 5. Optional: "Continue with Google" (5–10 min)
 
