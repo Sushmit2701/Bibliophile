@@ -1,6 +1,6 @@
 # Bibliophile
 
-**Private by default, shared only on purpose.** A commonplace book for the books you read: highlights, quotes, notes, reviews and reading stats, with no account needed.
+A small personal app to track and document the books I read — a private, Readwise-style commonplace book.
 
 No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays in your browser, and you can install it on your phone as an app that works offline.
 
