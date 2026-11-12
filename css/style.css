@@ -806,7 +806,8 @@ dialog::backdrop { background: rgba(30, 24, 18, .35); }
 /* mobile */
 @media (max-width: 760px) {
   .nav { background: var(--bg); border-top: 0; box-shadow: 0 -10px 24px -14px var(--shade-dark); padding-top: .45rem; }
-  .nav a { border-top: 0; border-radius: 14px; padding: .4rem .2rem; letter-spacing: .06em; }
+  .nav a { border-top: 0; border-radius: 14px; padding: .4rem .15rem; letter-spacing: .05em; }
+  .nav a[data-route="settings"] { flex: 0 0 2.4rem; }
   .nav a.active:not(.brand) { box-shadow: var(--inset); }
   .ledger { gap: 1rem; }
   .ledger-cell + .ledger-cell { border-top: 0; }
@@ -1087,3 +1088,21 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .cp-url label input { text-transform: none; letter-spacing: normal; font-weight: 400; font-size: .95rem; }
 .cp-up input[type=file] { box-shadow: none; padding: .3rem 0; text-transform: none; letter-spacing: normal; font-weight: 400; }
 .cp-url .btn { justify-self: start; }
+
+/* ---------- Account & sync ---------- */
+.mode-line { margin: .2rem 0 .6rem; }
+.mode-dot { display: inline-block; vertical-align: .05em; margin-right: .45rem; width: .6rem; height: .6rem; border-radius: 50%; background: var(--muted); box-shadow: var(--inset); }
+.mode-dot.on { background: #3f9a5b; box-shadow: 0 0 0 3px color-mix(in srgb, #3f9a5b 22%, transparent); }
+.sync-line { margin-top: -.2rem; }
+.sync-err { color: var(--danger); }
+.sync-guard { border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: 12px; padding: .8rem 1rem; margin: .6rem 0 1rem; }
+.sync-guard p { margin: 0 0 .7rem; }
+.google-btn { display: inline-flex; align-items: center; gap: .55rem; }
+.google-btn .g { font: 700 1rem var(--sans); background: conic-gradient(from -45deg, #ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.or-line { margin: .6rem 0 .2rem; }
+#account .form { margin-top: .4rem; }
+#account details.advanced { margin-top: .8rem; }
+@media (max-width: 420px) {
+  .nav { padding-left: .15rem; padding-right: .15rem; }
+  .nav a { font-size: .52rem; letter-spacing: .02em; padding-left: .1rem; padding-right: .1rem; }
+}

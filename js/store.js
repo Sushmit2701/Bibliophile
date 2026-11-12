@@ -59,7 +59,10 @@ function load() {
 export const db = load();
 const listeners = new Set();
 
+const saveHooks = new Set();
 export function onChange(fn) { listeners.add(fn); }
+// Runs after every save, quiet or not (used by optional sync to notice changes).
+export function onSave(fn) { saveHooks.add(fn); }
 
 // quiet: store without redrawing the page (for background bookkeeping like AI usage counts).
 export function save({ quiet = false } = {}) {
@@ -69,6 +72,7 @@ export function save({ quiet = false } = {}) {
   } catch (e) {
     alert('Could not save — storage may be full. Please export a backup. ' + e.message);
   }
+  saveHooks.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
   if (!quiet) listeners.forEach((fn) => fn());
 }
 

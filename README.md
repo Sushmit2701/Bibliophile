@@ -2,7 +2,7 @@
 
 A small personal app to track and document the books I read — a private, Readwise-style commonplace book.
 
-No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays in your browser, and you can install it on your phone as an app that works offline.
+No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (the default) your data stays in your browser, and you can install it on your phone as an app that works offline. If you want, you can turn on **sync** to use the same library on your phone and computer, through your own free Supabase project.
 
 ## What it does
 
@@ -72,6 +72,16 @@ No accounts, no server, no build step. It's plain HTML/CSS/JS. Your data stays i
 - Duplicates are skipped, so you can re-import an updated file safely
 - Back up and restore as JSON, or export everything (or a single book) as **Markdown**, which works well with Obsidian or Notion
 
+**Account & sync (optional)**
+- Personal mode is the default: no account, nothing leaves your device, and the sync code isn't even loaded.
+- Turn on sync in **Settings → Account & sync** to keep your phone and computer in step. Sign in with Google or with a code sent by email. Setup takes about 15 minutes, once: see [SYNC_SETUP.md](SYNC_SETUP.md).
+- **How syncing behaves:**
+  - Changes sync in the background, and offline changes go up later.
+  - Edits to different parts of the same book on two devices are both kept. Otherwise, the most recent change wins.
+  - A safety catch pauses sync if a device suddenly seems to be missing much of your library.
+- **Leaving:** sign out at any time to return to personal mode with everything kept on the device, or delete your cloud copy or whole account from Settings.
+- **What stays on the device:** your Gemini key, your Spotify sign-in, and cover photos you uploaded yourself.
+
 **Keyboard shortcuts:** `n` new highlight · `b` new book · `/` search · `r` review · `t` timer · `1`–`3` answer during review
 
 **Home-screen shortcuts:** once installed, long-press the app icon (Android, and desktop Chrome/Edge) for *Start reading timer*, *Save a passage* and *Daily review*.
@@ -92,7 +102,7 @@ python3 -m http.server 8000
 
 ## About your data
 
-Everything is stored in your browser's `localStorage` on that device only. Data doesn't sync between your phone and laptop. To move it, use **Settings → Download backup** on one device and **Import** on the other. Download a backup now and then, because clearing your browser's site data deletes it.
+Everything is stored in your browser's `localStorage` on that device. In personal mode nothing syncs: to move your library, use **Settings → Download backup** on one device and **Import** on the other. If you turn on sync, a copy is also kept in your own Supabase project (UK/EU region if you choose it), where row-level security means only your signed-in account can read it. Either way, download a backup now and then, because clearing your browser's site data deletes the copy on that device.
 
 ## Files
 
@@ -106,5 +116,8 @@ js/share.js           quote-card images and Markdown export
 js/yearcard.js        "my year in books" story image
 js/covers.js          cover lookup (Open Library → Google Books), saved copies, backup
 js/ai.js              Gemini calls, review tidying, caption / reel templates
+js/cloud.js           optional sign-in and sync (loaded only when switched on)
+js/cloud-config.js    your Supabase project URL and anon key, if built in
+supabase/schema.sql   the database table and security rules for sync
 sw.js, manifest.webmanifest, icons/   offline support and installable app
 ```

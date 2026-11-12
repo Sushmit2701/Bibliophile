@@ -40,6 +40,7 @@ export async function connect() {
 // Called once at start-up: finishes the sign-in when Spotify sends you back here.
 export async function handleRedirect() {
   const q = new URLSearchParams(location.search);
+  if (q.get('auth') === 'cloud') return null; // that's the sync sign-in coming back, not Spotify
   if (!q.has('code') && !q.has('error')) return null;
   const saved = JSON.parse(sessionStorage.getItem('bibliophile:spotify-pkce') || 'null');
   sessionStorage.removeItem('bibliophile:spotify-pkce');

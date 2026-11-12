@@ -254,7 +254,15 @@ function render() {
   // Activity grids open on the most recent weeks.
   $$('.heatmap').forEach((h) => { h.scrollLeft = h.scrollWidth; });
 }
-window.addEventListener('hashchange', () => { if (location.hash.split('/')[1] !== 'review') ui.reviewQueue = null; render(); });
+window.addEventListener('hashchange', () => {
+  // The link from a sign-in email, opened in a tab where the app was already running.
+  if (/^#(access_token|error_description)=/.test(location.hash)) {
+    loadCloud().then((C) => C.handleRedirect()).then((r) => { if (r) toast(r.ok ? `Signed in as ${r.email} — syncing your library` : r.message); render(); });
+    return;
+  }
+  if (location.hash.split('/')[1] !== 'review') ui.reviewQueue = null;
+  render();
+});
 onChange(render);
 
 // ============ VIEWS ============
@@ -702,6 +710,7 @@ function viewSettings() {
   const bytes = new Blob([JSON.stringify(db)]).size;
   return `
     <header class="page-head"><h1>Settings</h1></header>
+${accountSection()}
 
     <section class="card section">
       <h2>Preferences</h2>
@@ -798,6 +807,107 @@ function viewSettings() {
 
     <p class="danger-zone"><button class="btn ghost danger sm" data-action="wipe">Erase all data</button></p>
   `;
+}
+
+// ============ ACCOUNT & SYNC (optional) ============
+// Personal mode is the default: no account, and the sync code isn't even loaded.
+let Cloud = null;
+const CLOUD_SESSION = 'bibliophile:cloud-session';
+async function loadCloud() {
+  if (Cloud) return Cloud;
+  const m = await import('./cloud.js');
+  m.init({
+    onChange: refreshAccount,
+    // Save covers for books that arrived from another device (only when there's something new to fetch).
+    onPulled: (books) => {
+      for (const c of books) {
+        const b = !c.deleted && getBook(c.id);
+        if (!b) continue;
+        if (c.coverChanged && b.cover) ensureCover(b, { force: true });
+        else if (c.isNew && b.cover && !hasSavedCover(b.id)) ensureCover(b);
+      }
+    },
+  });
+  Cloud = m;
+  return m;
+}
+// Sync status changes redraw only the Account section, so nothing else on Settings is disturbed.
+function refreshAccount() {
+  const el = $('#account');
+  if (!el) return;
+  if (el.contains(document.activeElement) && document.activeElement.matches('input')) {
+    const line = $('.sync-line', el), st = Cloud.getStatus();
+    if (line && st.signedIn) line.innerHTML = $('.sync-line', new DOMParser().parseFromString(accountSection(), 'text/html'))?.innerHTML || line.innerHTML;
+    return;
+  }
+  const open = $('details', el)?.open;
+  el.outerHTML = accountSection();
+  if (open && $('#account details')) $('#account details').open = true;
+}
+const cloudWanted = () => !!localStorage.getItem(CLOUD_SESSION) || !!localStorage.getItem('bibliophile:cloud-config') || ui.cloudOpen;
+const ago = (iso) => {
+  if (!iso) return 'not yet';
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : fmtDate(iso);
+};
+
+function accountSection() {
+  const st = Cloud?.getStatus();
+  const head = `<h2>Account & sync <span class="muted small">optional</span></h2>`;
+  if (!st || (!st.signedIn && !ui.cloudOpen && !st.configured)) {
+    return `<section class="card section" id="account">${head}
+      <p class="mode-line"><span class="mode-dot"></span><b>Personal mode</b> · no account, everything stays on this device.</p>
+      <p class="muted small">If you'd like your library on your phone and your computer together, you can sign in to sync it — and later share a book club with friends. Sharing is always your choice, item by item. You can return to personal mode at any time.</p>
+      <button class="btn" data-action="cloud-open">Set up sync…</button>
+    </section>`;
+  }
+  if (st.signedIn) {
+    return `<section class="card section" id="account">${head}
+      <p class="mode-line"><span class="mode-dot on"></span>Signed in as <b>${esc(st.email)}</b> · your library syncs across your devices.</p>
+      <p class="muted small sync-line">${st.syncing ? 'Syncing…' : `Last synced ${ago(st.lastSync)}`}${st.error ? ` · <span class="sync-err">${esc(st.error)}</span>` : ''}</p>
+      ${st.guard ? `<div class="sync-guard">
+        <p><b>Sync paused to protect your library.</b> This device is missing ${st.guard.deletes} books and passages that your other devices still have. If this browser's storage was cleared, restore them. If you really deleted them, carry on.</p>
+        <div class="row gap wrap"><button class="btn primary" data-action="cloud-restore">Restore from my other devices</button><button class="btn ghost danger" data-action="cloud-allow-deletes">Delete them everywhere</button></div>
+      </div>` : ''}
+      <div class="row gap wrap">
+        <button class="btn" data-action="cloud-sync" ${st.syncing ? 'disabled' : ''}>Sync now</button>
+        <button class="btn ghost" data-action="cloud-signout">Sign out (back to personal mode)</button>
+      </div>
+      <p class="muted small">Signing out keeps everything on this device. Your Gemini key never leaves this browser, and cover photos you uploaded yourself stay on the device you added them on (covers found online appear everywhere).</p>
+      <details class="advanced"><summary>Delete my data</summary>
+        <div class="row gap wrap">
+          <button class="btn ghost danger sm" data-action="cloud-delete-copy">Delete my cloud copy and sign out</button>
+          <button class="btn ghost danger sm" data-action="cloud-delete-account">Delete my account</button>
+        </div>
+        <p class="muted small">Both keep everything on this device. Deleting your account removes your sign-in and everything stored for it.</p>
+      </details>
+    </section>`;
+  }
+  // Not signed in: set up the project, then sign in.
+  const setup = `<form class="form" data-form="cloud-config">
+      <p class="muted small">Sync uses your own free <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a> project, so your data sits in a database only you control. Follow <a href="https://github.com/sushmit2701/bibliophile/blob/claude/personal-reading-app-8byml4/SYNC_SETUP.md" target="_blank" rel="noopener">the setup guide</a> (about 15 minutes, once), then paste your project's details here.</p>
+      <label>Project URL <input name="url" autocomplete="off" spellcheck="false" placeholder="https://abcd1234.supabase.co" value="${esc(Cloud?.config()?.url || '')}"></label>
+      <label>Anon public key <input name="anonKey" autocomplete="off" spellcheck="false" placeholder="eyJhbGciOi… or sb_publishable_…" value="${esc(Cloud?.config()?.anonKey || '')}"></label>
+      <div class="row gap wrap"><button class="btn primary">Save</button>${st.configured ? '<button type="button" class="btn ghost" data-action="cloud-forget-config">Remove</button>' : ''}<button type="button" class="btn ghost" data-action="cloud-close">Stay in personal mode</button></div>
+    </form>`;
+  if (!st.configured) return `<section class="card section" id="account">${head}${setup}</section>`;
+  const signin = st.pendingEmail
+    ? `<form class="form" data-form="cloud-code">
+        <p class="muted small">We've emailed a sign-in code to <b>${esc(st.pendingEmail)}</b>. Type it here, or tap the link in the email on this device.</p>
+        <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" autofocus></label>
+        <div class="row gap wrap"><button class="btn primary">Sign in</button><button type="button" class="btn ghost" data-action="cloud-email-cancel">Use a different email</button></div>
+      </form>`
+    : `${st.google ? '<button class="btn google-btn" data-action="cloud-google"><span class="g">G</span> Continue with Google</button><p class="or-line muted small">or</p>' : ''}
+      <form class="form" data-form="cloud-email">
+        <label>Email <input name="email" type="email" autocomplete="email" placeholder="you@example.com"></label>
+        <div class="row gap wrap"><button class="btn primary">Email me a sign-in code</button></div>
+      </form>`;
+  return `<section class="card section" id="account">${head}
+    <p class="mode-line"><span class="mode-dot"></span><b>Personal mode</b> · sign in to start syncing.</p>
+    <p class="muted small">Your library on this device will be combined with anything already in your account; nothing is lost. If the same book was changed on two devices, the most recent change is kept.</p>
+    ${signin}
+    ${st.builtIn ? '' : `<details class="advanced"><summary>Sync server</summary>${setup}</details>`}
+  </section>`;
 }
 
 // ============ READING TIMER ============
@@ -1707,9 +1817,37 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'cloud-open': ui.cloudOpen = true; await loadCloud(); Cloud.loadProviders(); render(); break;
+    case 'cloud-close': ui.cloudOpen = false; if (Cloud && !Cloud.getStatus().configured) Cloud = null; render(); break;
+    case 'cloud-forget-config': Cloud.setConfig('', ''); render(); break;
+    case 'cloud-google': Cloud.signInWithGoogle(); break;
+    case 'cloud-email-cancel': Cloud.cancelEmail(); break;
+    case 'cloud-sync': Cloud.syncNow(); break;
+    case 'cloud-restore': Cloud.restoreFromCloud().then(() => toast('Restored from your other devices')); break;
+    case 'cloud-allow-deletes':
+      if (confirm(`Delete these ${Cloud.getStatus().guard?.deletes || 0} books and passages from all your devices?`)) Cloud.syncNow({ allowDeletes: true });
+      break;
+    case 'cloud-signout':
+      el.disabled = true;
+      await Cloud.signOut();
+      ui.cloudOpen = false;
+      toast('Signed out. Everything is still on this device.');
+      render();
+      break;
+    case 'cloud-delete-copy':
+      if (!confirm('Delete your library from the cloud and sign out? It stays on this device. Your other devices keep their copy until you sign out there too.')) break;
+      try { await Cloud.deleteCloudCopy(); toast('Cloud copy deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
+      render();
+      break;
+    case 'cloud-delete-account':
+      if (!confirm('Delete your account and everything stored in it? Your library stays on this device.') || prompt('Type DELETE to confirm') !== 'DELETE') break;
+      try { await Cloud.deleteAccount(); toast('Account deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
+      render();
+      break;
     case 'export-md': download(`bibliophile-${today()}.md`, allMarkdown()); break;
     case 'wipe':
-      if (confirm('Erase ALL books, highlights and settings from this device?') && prompt('Type ERASE to confirm') === 'ERASE') {
+      if (confirm('Erase ALL books, highlights and settings from this device?' + (Cloud?.getStatus().signedIn ? ' You\'ll be signed out first, so your cloud copy and other devices are not affected.' : '')) && prompt('Type ERASE to confirm') === 'ERASE') {
+        if (Cloud?.getStatus().signedIn) await Cloud.signOut();
         db.books = []; db.items = []; db.reviewLog = {}; clearCovers(); save(); toast('All data erased');
       }
       break;
@@ -1943,6 +2081,17 @@ document.addEventListener('submit', (e) => {
     save(); applyTheme(); toast('Settings saved');
   } else if (type === 'cover-url') {
     saveChosenCover(getBook(fd.id), (fd.url || '').trim());
+  } else if (type === 'cloud-config') {
+    try { Cloud.setConfig(fd.url, fd.anonKey); toast('Saved'); Cloud.loadProviders(); } catch (err) { toast(err.message); }
+    render();
+  } else if (type === 'cloud-email') {
+    const btn = $('button.primary', form); btn.disabled = true; btn.textContent = 'Sending…';
+    Cloud.sendEmailCode(fd.email).then(() => toast('Code sent — check your email'))
+      .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Email me a sign-in code'; });
+  } else if (type === 'cloud-code') {
+    const btn = $('button.primary', form); btn.disabled = true; btn.textContent = 'Signing in…';
+    Cloud.verifyEmailCode(fd.code).then((r) => { toast(`Signed in as ${r.email} — syncing your library`); render(); })
+      .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Sign in'; });
   } else if (type === 'spotify') {
     db.settings.spotifyClientId = (fd.spotifyClientId || '').trim();
     save(); toast(db.settings.spotifyClientId ? 'Saved — now press Connect Spotify' : 'Client ID cleared');
@@ -1979,6 +2128,15 @@ Sound.mount($('#sound-dock'));
 render();
 Spotify.handleRedirect().then((r) => { if (!r) return; render(); toast(r.ok ? 'Spotify connected — pick a playlist in the reading room' : r.message); })
   .catch(() => toast('Spotify sign-in failed — try again'));
+// Optional sync: only loaded if you've switched it on (or are coming back from signing in).
+if (cloudWanted() || /[?&]auth=cloud|[#&](access_token|error_description)=/.test(location.search + location.hash)) {
+  loadCloud().then(async (C) => {
+    C.loadProviders();
+    const r = await C.handleRedirect();
+    if (r) { toast(r.ok ? `Signed in as ${r.email} — syncing your library` : r.message); }
+    render();
+  }).catch(() => {});
+}
 onCoverChange(render);
 loadCovers().then(() => {
   render();
