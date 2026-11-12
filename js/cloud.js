@@ -23,13 +23,15 @@ const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null')
 const write = (k, v) => (v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)));
 
 // ---------- config ----------
+// Only the project's address matters: anything after it (like /rest/v1/ copied from the dashboard) is dropped.
+const origin = (u) => { try { return new URL(String(u).trim()).origin; } catch { return String(u || '').trim().replace(/\/+$/, ''); } };
 export function config() {
-  if (CLOUD.url && CLOUD.anonKey) return { url: CLOUD.url.replace(/\/+$/, ''), anonKey: CLOUD.anonKey, builtIn: true };
+  if (CLOUD.url && CLOUD.anonKey) return { url: origin(CLOUD.url), anonKey: CLOUD.anonKey.trim(), builtIn: true };
   const c = read(CFG_KEY);
-  return c?.url && c?.anonKey ? { ...c, builtIn: false } : null;
+  return c?.url && c?.anonKey ? { url: origin(c.url), anonKey: c.anonKey.trim(), builtIn: false } : null;
 }
 export function setConfig(url, anonKey) {
-  url = String(url || '').trim().replace(/\/+$/, '');
+  url = String(url || '').trim() ? origin(url) : '';
   anonKey = String(anonKey || '').trim();
   if (!url && !anonKey) { write(CFG_KEY, null); providers = null; emit(); return; }
   if (!/^https:\/\/[^/\s]+$/.test(url) && !/^http:\/\/localhost(:\d+)?$/.test(url)) throw new Error('The project URL should look like https://abcd1234.supabase.co');
