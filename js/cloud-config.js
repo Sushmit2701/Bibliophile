@@ -3,6 +3,6 @@
 // (see SYNC_SETUP.md). The anon key is designed to be public: row-level security protects the data.
 // You can also paste them in Settings → Account & sync instead.
 export const CLOUD = {
-  url: '',      // e.g. 'https://abcdefghijklmnop.supabase.co'
-  anonKey: '',  // the "anon public" (or "publishable") key
+  url: 'https://tghjhzjelcdtrxckpodl.supabase.co/rest/v1/' ,
+  anonKey: 'sb_publishable_ZYPmsHZKv5qvhpqh03bGXQ_y-Rlmceq' ,
 };
