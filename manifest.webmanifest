@@ -1,7 +1,7 @@
 {
   "name": "Bibliophile",
   "short_name": "Bibliophile",
-  "description": "Your personal commonplace book: books, highlights, quotes and reviews.",
+  "description": "A commonplace book for the books you read. Private by default, shared only on purpose.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
