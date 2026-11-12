@@ -89,7 +89,12 @@ No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (
   - Members choose the name the club sees.
   - Whoever runs the club can rename it, remove people, or make a new invite link, which stops the old one working.
   - If they leave, the longest-standing member takes over.
-- **Coming next:** a shared book with everyone's progress, passages you choose to share, and goals and deadlines.
+- **Reading together:**
+  - **The club's book:** whoever runs the club chooses it, from their library or by typing it in. Finished books move to a *Read together* list.
+  - **Progress:** each member links the club's book to their own library with one tap. After that, their progress updates by itself when they log pages or use the timer, and everyone sees how far everyone else has got.
+  - **Shared passages:** everything in your notebook stays private. To share a passage, tap **❧ Share** on it, or tick *Share with the club* when you save it. Edits update the shared copy, and you can stop sharing at any time. Friends can save your passages into their own notebook.
+  - **Goals and deadlines:** any member can add one, like "Part one, to page 120, by Sunday". The club page shows days left and who's already there.
+  - **Leaving:** your progress and shared passages are removed from the club.
 
 **Keyboard shortcuts:** `n` new highlight · `b` new book · `/` search · `r` review · `t` timer · `1`–`3` answer during review
 

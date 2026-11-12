@@ -187,21 +187,213 @@ begin
   return code;
 end $$;
 
+-- remove_member and leave_club are defined further down, with the reading-together tables.
+
+-- =====================================================================
+-- Reading together: the club's book, everyone's progress, shared passages,
+-- goals and deadlines. Again, only reachable through the functions below.
+-- =====================================================================
+
+create table if not exists public.club_books (
+  id          uuid primary key default gen_random_uuid(),
+  club_id     uuid not null references public.clubs (id) on delete cascade,
+  title       text not null check (char_length(title) between 1 and 300),
+  author      text not null default '' check (char_length(author) <= 300),
+  cover       text not null default '' check (char_length(cover) <= 1000),
+  pages       int  not null default 0 check (pages between 0 and 100000),
+  isbn        text not null default '' check (char_length(isbn) <= 20),
+  status      text not null default 'current' check (status in ('current', 'done')),
+  chosen_by   uuid references auth.users (id) on delete set null,
+  started_at  timestamptz not null default now(),
+  finished_at timestamptz
+);
+create unique index if not exists club_books_one_current on public.club_books (club_id) where status = 'current';
+
+create table if not exists public.club_progress (
+  club_book_id uuid not null references public.club_books (id) on delete cascade,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  page         int  not null default 0 check (page between 0 and 100000),
+  status       text not null default 'reading' check (status in ('want', 'reading', 'finished', 'paused', 'abandoned')),
+  updated_at   timestamptz not null default now(),
+  primary key (club_book_id, user_id)
+);
+
+create table if not exists public.club_passages (
+  id           uuid primary key default gen_random_uuid(),
+  club_book_id uuid not null references public.club_books (id) on delete cascade,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  item_id      text not null check (char_length(item_id) between 1 and 100),
+  kind         text not null default 'highlight' check (kind in ('highlight', 'quote', 'note', 'idea', 'question', 'word')),
+  text         text not null check (char_length(text) between 1 and 5000),
+  note         text not null default '' check (char_length(note) <= 5000),
+  page         text not null default '' check (char_length(page) <= 40),
+  chapter      text not null default '' check (char_length(chapter) <= 200),
+  shared_at    timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (club_book_id, user_id, item_id)
+);
+
+create table if not exists public.club_goals (
+  id           uuid primary key default gen_random_uuid(),
+  club_id      uuid not null references public.clubs (id) on delete cascade,
+  club_book_id uuid references public.club_books (id) on delete cascade,
+  title        text not null check (char_length(title) between 1 and 120),
+  target_page  int check (target_page between 1 and 100000),
+  due          date not null,
+  created_by   uuid references auth.users (id) on delete set null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists club_goals_club on public.club_goals (club_id, due);
+
+alter table public.club_books enable row level security;
+alter table public.club_progress enable row level security;
+alter table public.club_passages enable row level security;
+alter table public.club_goals enable row level security;
+revoke all on public.club_books, public.club_progress, public.club_passages, public.club_goals from anon, authenticated;
+
+create or replace function public.club_of_book(p_book uuid) returns uuid
+language sql stable security definer set search_path = '' as $$
+  select club_id from public.club_books where id = p_book;
+$$;
+
+-- Everything the club page shows about reading together, in one call.
+create or replace function public.club_reading(p_club uuid) returns json
+language plpgsql stable security definer set search_path = '' as $$
+declare cur uuid; r json;
+begin
+  if public.club_role(p_club) is null then raise exception 'You''re not a member of this book club.'; end if;
+  select id into cur from public.club_books where club_id = p_club and status = 'current';
+  select json_build_object(
+    'current', (select row_to_json(b) from public.club_books b where b.id = cur),
+    'past', coalesce((select json_agg(row_to_json(b) order by b.finished_at desc)
+                      from (select * from public.club_books where club_id = p_club and status = 'done' order by finished_at desc limit 12) b), '[]'::json),
+    'progress', coalesce((select json_agg(json_build_object(
+        'user_id', m.user_id, 'name', coalesce(pr.display_name, 'A reader'),
+        'page', coalesce(p.page, 0), 'status', p.status, 'updated_at', p.updated_at) order by coalesce(p.page, 0) desc, m.joined_at)
+      from public.club_members m
+      left join public.profiles pr on pr.id = m.user_id
+      left join public.club_progress p on p.club_book_id = cur and p.user_id = m.user_id
+      where m.club_id = p_club and cur is not null), '[]'::json),
+    'passages', coalesce((select json_agg(x order by x.shared_at desc) from (
+        select cp.id, cp.user_id, coalesce(pr.display_name, 'A reader') as name, cp.item_id, cp.kind, cp.text, cp.note, cp.page, cp.chapter, cp.shared_at
+        from public.club_passages cp
+        join public.club_members m on m.club_id = p_club and m.user_id = cp.user_id
+        left join public.profiles pr on pr.id = cp.user_id
+        where cp.club_book_id = cur order by cp.shared_at desc limit 300) x), '[]'::json),
+    'goals', coalesce((select json_agg(json_build_object(
+        'id', g.id, 'title', g.title, 'target_page', g.target_page, 'due', g.due, 'created_by', g.created_by, 'club_book_id', g.club_book_id) order by g.due, g.created_at)
+      from public.club_goals g where g.club_id = p_club and (g.club_book_id is null or g.club_book_id = cur)), '[]'::json)
+  ) into r;
+  return r;
+end $$;
+
+-- Choosing the next book (the person who runs the club). The current one moves to "read together".
+create or replace function public.set_club_book(p_club uuid, p_title text, p_author text default '', p_cover text default '', p_pages int default 0, p_isbn text default '')
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare bid uuid;
+begin
+  if public.club_role(p_club) is distinct from 'owner' then raise exception 'Only the person who runs the club can choose the book.'; end if;
+  if char_length(trim(coalesce(p_title, ''))) = 0 then raise exception 'Please add the book''s title.'; end if;
+  update public.club_books set status = 'done', finished_at = now() where club_id = p_club and status = 'current';
+  insert into public.club_books (club_id, title, author, cover, pages, isbn, chosen_by)
+  values (p_club, left(trim(p_title), 300), left(trim(coalesce(p_author, '')), 300),
+          case when coalesce(p_cover, '') ~ '^https://' then left(p_cover, 1000) else '' end,
+          greatest(0, least(coalesce(p_pages, 0), 100000)), left(coalesce(p_isbn, ''), 20), auth.uid())
+  returning id into bid;
+  return bid;
+end $$;
+
+create or replace function public.finish_club_book(p_club uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if public.club_role(p_club) is distinct from 'owner' then raise exception 'Only the person who runs the club can do this.'; end if;
+  update public.club_books set status = 'done', finished_at = now() where club_id = p_club and status = 'current';
+end $$;
+
+-- Your own progress in a club book (sent automatically from your library).
+create or replace function public.set_progress(p_book uuid, p_page int, p_status text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if public.club_role(public.club_of_book(p_book)) is null then raise exception 'You''re not a member of this book club.'; end if;
+  insert into public.club_progress (club_book_id, user_id, page, status)
+  values (p_book, auth.uid(), greatest(0, least(coalesce(p_page, 0), 100000)),
+          case when p_status in ('want', 'reading', 'finished', 'paused', 'abandoned') then p_status else 'reading' end)
+  on conflict (club_book_id, user_id) do update set page = excluded.page, status = excluded.status, updated_at = now();
+end $$;
+
+-- Sharing a passage you chose; editing it here updates the shared copy.
+create or replace function public.share_passage(p_book uuid, p_item_id text, p_kind text, p_text text, p_note text default '', p_page text default '', p_chapter text default '')
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if public.club_role(public.club_of_book(p_book)) is null then raise exception 'You''re not a member of this book club.'; end if;
+  if (select count(*) from public.club_passages where club_book_id = p_book and user_id = auth.uid() and item_id <> p_item_id) >= 500 then
+    raise exception 'You''ve shared 500 passages from this book — that''s the limit.';
+  end if;
+  insert into public.club_passages (club_book_id, user_id, item_id, kind, text, note, page, chapter)
+  values (p_book, auth.uid(), p_item_id,
+          case when p_kind in ('highlight', 'quote', 'note', 'idea', 'question', 'word') then p_kind else 'highlight' end,
+          left(p_text, 5000), left(coalesce(p_note, ''), 5000), left(coalesce(p_page, ''), 40), left(coalesce(p_chapter, ''), 200))
+  on conflict (club_book_id, user_id, item_id) do update
+    set kind = excluded.kind, text = excluded.text, note = excluded.note, page = excluded.page, chapter = excluded.chapter, updated_at = now();
+end $$;
+
+create or replace function public.unshare_passage(p_book uuid, p_item_id text) returns void
+language sql security definer set search_path = '' as $$
+  delete from public.club_passages where club_book_id = p_book and user_id = auth.uid() and item_id = p_item_id;
+$$;
+
+-- Goals and deadlines: any member can add one; its author or the club's owner can remove it.
+create or replace function public.add_goal(p_club uuid, p_title text, p_target_page int, p_due date) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare gid uuid;
+begin
+  if public.club_role(p_club) is null then raise exception 'You''re not a member of this book club.'; end if;
+  if char_length(trim(coalesce(p_title, ''))) = 0 then raise exception 'Please describe the goal.'; end if;
+  if p_due is null then raise exception 'Please choose a date.'; end if;
+  if (select count(*) from public.club_goals where club_id = p_club and due >= current_date) >= 30 then raise exception 'That''s plenty of goals for now (30).'; end if;
+  insert into public.club_goals (club_id, club_book_id, title, target_page, due, created_by)
+  values (p_club, (select id from public.club_books where club_id = p_club and status = 'current'),
+          left(trim(p_title), 120), nullif(greatest(0, least(coalesce(p_target_page, 0), 100000)), 0), p_due, auth.uid())
+  returning id into gid;
+  return gid;
+end $$;
+
+create or replace function public.remove_goal(p_goal uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare g record;
+begin
+  select club_id, created_by into g from public.club_goals where id = p_goal;
+  if g is null then return; end if;
+  if g.created_by is distinct from auth.uid() and public.club_role(g.club_id) is distinct from 'owner' then
+    raise exception 'Only whoever added this goal, or the person who runs the club, can remove it.';
+  end if;
+  delete from public.club_goals where id = p_goal;
+end $$;
+
+-- When someone leaves (or is removed), their progress and shared passages leave with them.
+create or replace function public.forget_member(p_club uuid, p_user uuid) returns void
+language sql security definer set search_path = '' as $$
+  delete from public.club_progress where user_id = p_user and club_book_id in (select id from public.club_books where club_id = p_club);
+  delete from public.club_passages where user_id = p_user and club_book_id in (select id from public.club_books where club_id = p_club);
+$$;
+revoke all on function public.forget_member(uuid, uuid) from public, anon, authenticated;
+
 create or replace function public.remove_member(p_club uuid, p_user uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
   if public.club_role(p_club) is distinct from 'owner' then raise exception 'Only the person who runs the club can do this.'; end if;
   if p_user = auth.uid() then raise exception 'To leave your own club, use Leave.'; end if;
   delete from public.club_members where club_id = p_club and user_id = p_user;
+  perform public.forget_member(p_club, p_user);
 end $$;
 
--- Leaving: if the owner leaves, the longest-standing member takes over; the last one out closes the club.
 create or replace function public.leave_club(p_club uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 declare was text := public.club_role(p_club); heir uuid;
 begin
   if was is null then return; end if;
   delete from public.club_members where club_id = p_club and user_id = auth.uid();
+  perform public.forget_member(p_club, auth.uid());
   if was = 'owner' then
     select user_id into heir from public.club_members where club_id = p_club order by joined_at limit 1;
     if heir is null then delete from public.clubs where id = p_club;
@@ -228,7 +420,10 @@ declare f text;
 begin
   foreach f in array array['club_role(uuid)', 'make_invite_code()', 'set_display_name(text)', 'my_profile()',
     'create_club(text,text,text)', 'my_clubs()', 'club_details(uuid)', 'club_preview(text)', 'join_club(text,text)',
-    'update_club(uuid,text,text)', 'reset_invite(uuid)', 'remove_member(uuid,uuid)', 'leave_club(uuid)', 'delete_my_account()'] loop
+    'update_club(uuid,text,text)', 'reset_invite(uuid)', 'remove_member(uuid,uuid)', 'leave_club(uuid)', 'delete_my_account()',
+    'club_of_book(uuid)', 'club_reading(uuid)', 'set_club_book(uuid,text,text,text,integer,text)', 'finish_club_book(uuid)',
+    'set_progress(uuid,integer,text)', 'share_passage(uuid,text,text,text,text,text,text)', 'unshare_passage(uuid,text)',
+    'add_goal(uuid,text,integer,date)', 'remove_goal(uuid)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;

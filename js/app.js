@@ -1,5 +1,5 @@
 import {
-  db, save, onChange, uid, today, addDays, KINDS, STATUSES, ASPECTS, suggestedRating, fmtRating,
+  db, save, onChange, onSave, uid, today, addDays, KINDS, STATUSES, ASPECTS, suggestedRating, fmtRating,
   getBook, upsertBook, deleteBook, logSession,
   getItem, itemsForBook, upsertItem, deleteItem, allTags,
   buildReviewQueue, reviewItem, reviewStreak, exportJSON, importJSON,
@@ -416,6 +416,7 @@ function itemCard(i, opts = {}) {
         <button class="icon-btn ${i.favorite ? 'fav' : ''}" data-action="fav" data-id="${i.id}" title="Favorite">${i.favorite ? '♥' : '♡'}</button>
         <button class="icon-btn" data-action="copy" data-id="${i.id}" title="Copy">⧉</button>
         ${i.kind !== 'word' ? `<button class="icon-btn word-btn" data-action="word-from" data-id="${i.id}" title="Save a word from this passage (select it first)">+ Word</button><button class="icon-btn" data-action="card" data-id="${i.id}" title="Share as image">▣</button>` : ''}
+        ${clubLinksOf(book).length && i.text ? (() => { const on = clubLinksOf(book).some((l) => i.sharedTo?.includes(l.cb)); return `<button class="icon-btn club-share-btn ${on ? 'on' : ''}" data-action="club-share-item" data-id="${i.id}" title="${on ? 'Shared with ' + esc(clubLinksOf(book).map((l) => l.name).join(', ')) + ' — tap to stop sharing' : 'Share with ' + esc(clubLinksOf(book).map((l) => l.name).join(', '))}">❧ ${on ? 'Shared' : 'Share'}</button>`; })() : ''}
         <button class="icon-btn" data-action="edit-item" data-id="${i.id}" title="Edit">✎</button>
         <button class="icon-btn" data-action="delete-item" data-id="${i.id}" title="Delete">🗑</button>
       </div>`}
@@ -535,6 +536,7 @@ function viewBook(id) {
       <div class="grow">
         <h1>${esc(b.title)}</h1>
         <p class="author">${esc(b.author)}${b.year ? ` <span class="muted">· ${esc(b.year)}</span>` : ''}</p>
+        ${clubLinksOf(b).map((l) => `<a class="club-chip" href="#/club/${esc(l.club)}">❧ Reading with ${esc(l.name)} →</a>`).join('')}
         <div class="row gap wrap center-v">
           <select data-action-change="status" data-id="${b.id}" class="status-select s-${b.status}">
             ${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${b.status === k ? 'selected' : ''}>${v}</option>`).join('')}
@@ -996,6 +998,7 @@ function viewClub(id) {
     <a href="#/clubs" class="back">← Book clubs</a>
     <header class="page-head club-head"><h1>${esc(c.name)}</h1>${c.description ? `<p class="lede muted">${esc(c.description)}</p>` : ''}</header>
     ${f.err ? `<p class="sync-err small">${esc(f.err)}</p>` : ''}
+    ${readingTogether(c)}
     <section class="card section">
       <h2>Members <span class="muted small">${members.length} of 10</span></h2>
       <ul class="member-list">${members.map((m) => {
@@ -1019,10 +1022,6 @@ function viewClub(id) {
           ${owner ? `<button class="btn ghost" data-action="club-reset" data-id="${esc(c.id)}">Make a new link</button>` : ''}
         </div>
         ${owner ? '<p class="muted small">Making a new link stops the old one from working. People already in the club stay.</p>' : ''}`}
-    </section>
-    <section class="card section club-soon">
-      <h2>Reading together <span class="muted small">coming next</span></h2>
-      <p class="muted">Soon you'll pick a book to read together here, see everyone's progress, share passages from your notebook, and set goals and deadlines.</p>
     </section>
     <section class="card section">
       ${owner ? `<details class="advanced"><summary>Edit club</summary>
@@ -1079,6 +1078,162 @@ function viewJoin(code) {
   </section>`;
 }
 
+// ---------- reading together ----------
+const normTitle = (s) => String(s || '').toLowerCase().replace(/^(the|a|an)\s+/, '').replace(/[^a-z0-9]/g, '');
+const linkedBook = (cb) => db.books.find((b) => b.clubLinks?.some((l) => l.cb === cb));
+const matchBook = (cur) => db.books.find((b) => (cur.isbn && b.isbn && b.isbn.replace(/\D/g, '') === cur.isbn.replace(/\D/g, ''))
+  || (normTitle(b.title) === normTitle(cur.title) && (!cur.author || !b.author || normTitle(b.author).includes(normTitle(cur.author).slice(0, 6)) || normTitle(cur.author).includes(normTitle(b.author).slice(0, 6)))));
+function daysUntil(d) { return Math.round((new Date(d + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 864e5); }
+function dueText(d) {
+  const n = daysUntil(d);
+  return n === 0 ? 'due today' : n === 1 ? 'due tomorrow' : n > 1 ? `in ${n} days` : n === -1 ? '1 day late' : `${-n} days late`;
+}
+const reached = (p, g, pages) => p.status === 'finished' || (g.target_page ? p.page >= g.target_page : false);
+
+function chooseBookForm(c, cur) {
+  const options = db.books.filter((b) => b.status !== 'abandoned').sort((a, b) => (a.status === 'want' ? 0 : 1) - (b.status === 'want' ? 0 : 1) || a.title.localeCompare(b.title));
+  return `<form class="form" data-form="club-book">
+      <input type="hidden" name="club" value="${esc(c.id)}">
+      ${options.length ? `<label>From your library
+        <select name="local"><option value="">— choose a book —</option>${options.map((b) => `<option value="${b.id}">${esc(b.title)}${b.author ? ' — ' + esc(b.author) : ''}${b.status === 'want' ? ' (want to read)' : ''}</option>`).join('')}</select>
+      </label><p class="muted small or-line">or type it in</p>` : ''}
+      <div class="row gap wrap">
+        <label class="grow">Title <input name="title" maxlength="300"></label>
+        <label class="grow">Author <input name="author" maxlength="300"></label>
+        <label>Pages <input name="pages" type="number" min="0" max="100000" style="max-width:7rem"></label>
+      </div>
+      <button class="btn primary">${cur ? 'Start this book instead' : 'Start reading together'}</button>
+      ${cur ? `<p class="muted small">“${esc(cur.title)}” moves to the books you've read together.</p>` : ''}
+    </form>`;
+}
+
+function readingTogether(c) {
+  const f = freshen('reading:' + c.id, () => Clubs.refreshReading(c.id));
+  const R = Clubs.cachedReading(c.id);
+  if (!R) return `<section class="card section"><h2>Reading together</h2><p class="muted">${f.err ? esc(f.err) : 'Loading…'}</p></section>`;
+  const owner = c.role === 'owner';
+  const cur = R.current;
+  const ownerName = (c.members || []).find((m) => m.role === 'owner')?.name || 'the person who runs the club';
+  const past = R.past?.length ? `<section class="card section"><h2>Read together</h2><ul class="past-books">${R.past.map((b) => `<li><b>${esc(b.title)}</b>${b.author ? ` <span class="muted">· ${esc(b.author)}</span>` : ''} <span class="muted small">${fmtDate(b.started_at)} – ${fmtDate(b.finished_at)}</span></li>`).join('')}</ul></section>` : '';
+  if (!cur) {
+    return `<section class="card section"><h2>Reading together</h2>
+      ${owner ? `<p class="muted">Choose a book for the club to read. Everyone can then follow each other's progress, share passages and set deadlines.</p>${chooseBookForm(c, null)}`
+        : `<p class="muted">Waiting for ${esc(ownerName)} to choose ${R.past?.length ? 'the next' : 'the first'} book.</p>`}
+    </section>` + past;
+  }
+  const pages = cur.pages || 0;
+  const mine = linkedBook(cur.id);
+  const match = !mine && matchBook(cur);
+  const meIn = (R.progress || []).find((p) => p.user_id === c.me);
+  const yourBook = mine
+    ? `<p class="club-you">In your library${mine.pages ? ` · p. ${mine.currentPage || 0} of ${mine.pages}` : ''} · <a href="#/book/${mine.id}">Open</a></p>
+       <p class="muted small">Your progress is shared with the club automatically as you log pages or use the timer. Passages stay private unless you share them.</p>`
+    : match
+      ? `<p class="club-you">“${esc(match.title)}” is already in your library.</p><button class="btn primary" data-action="club-link" data-id="${esc(c.id)}" data-local="${match.id}">Use it for the club</button>
+         <p class="muted small">Your progress in it will be shared with the club. Passages stay private unless you share them.</p>`
+      : `<button class="btn primary" data-action="club-add-book" data-id="${esc(c.id)}">Add to my library</button>
+         <p class="muted small">Adds it as “Reading”. Your progress will be shared with the club; passages stay private unless you share them.</p>`;
+  const goals = R.goals || [];
+  const progress = (R.progress || []).map((p) => {
+    const pct = pages ? Math.min(100, Math.round(((p.status === 'finished' ? pages : p.page) / pages) * 100)) : 0;
+    const label = p.status === 'finished' ? 'Finished' : !p.status ? 'Not started yet' : p.status === 'abandoned' ? 'Stopped' : p.status === 'paused' ? `Paused · p. ${p.page}` : `p. ${p.page}${pages ? ` · ${pct}%` : ''}`;
+    return `<li class="${p.user_id === c.me ? 'me' : ''}">
+      <span class="avatar">${initials(p.name)}</span>
+      <div class="grow">
+        <div class="row between"><span class="m-name">${esc(p.name)}${p.user_id === c.me ? ' <span class="muted small">(you)</span>' : ''}</span><span class="muted small">${label}${p.updated_at ? ` · ${ago(p.updated_at)}` : ''}</span></div>
+        ${pages ? `<div class="progress club-bar"><span style="width:${pct}%"></span>${goals.filter((g) => g.target_page && g.target_page < pages).map((g) => `<i class="goal-tick" style="left:${(g.target_page / pages) * 100}%" title="${esc(g.title)}"></i>`).join('')}</div>` : ''}
+      </div></li>`;
+  }).join('');
+  const goalRows = goals.map((g) => {
+    const late = daysUntil(g.due) < 0;
+    const done = (R.progress || []).filter((p) => reached(p, g, pages));
+    const canRemove = owner || g.created_by === c.me;
+    return `<li class="goal ${late ? 'late' : ''}">
+      <div class="grow">
+        <b>${esc(g.title)}</b>${g.target_page ? ` <span class="muted">· to p. ${g.target_page}</span>` : ''}
+        <div class="muted small">${fmtDate(g.due)} · <span class="${late ? 'sync-err' : ''}">${dueText(g.due)}</span>${g.target_page ? ` · ${done.length} of ${(R.progress || []).length} there${done.length ? ': ' + done.map((p) => esc(p.name)).join(', ') : ''}` : ''}</div>
+      </div>
+      ${canRemove ? `<button class="link-btn small danger" data-action="club-goal-remove" data-id="${esc(c.id)}" data-goal="${esc(g.id)}">Remove</button>` : ''}
+    </li>`;
+  }).join('');
+  const passages = (R.passages || []).map((x) => {
+    const own = x.user_id === c.me;
+    return `<article class="item club-passage kind-${esc(x.kind)}">
+      <div class="item-top"><span class="kind-badge">${esc(KINDS[x.kind]?.label || 'Highlight')}</span>${x.page ? `<span class="muted small">${/^\d/.test(x.page) ? 'p. ' : ''}${esc(x.page)}</span>` : ''}</div>
+      <blockquote>${nl2br(x.text)}</blockquote>
+      ${x.note ? `<div class="note"><span class="note-label">${own ? 'My note' : esc(x.name) + '’s note'}</span>${nl2br(x.note)}</div>` : ''}
+      <div class="attribution">— shared by ${own ? 'you' : esc(x.name)} · ${ago(x.shared_at)}</div>
+      <div class="item-actions">${own
+        ? `<button class="link-btn small" data-action="club-unshare" data-cb="${esc(cur.id)}" data-item="${esc(x.item_id)}">Stop sharing</button>`
+        : `<button class="link-btn small" data-action="club-save-passage" data-id="${esc(c.id)}" data-passage="${esc(x.id)}">Save to my notebook</button>`}</div>
+    </article>`;
+  }).join('');
+  return `
+    <section class="card section club-book">
+      <h2>Reading together</h2>
+      <div class="club-book-row">
+        ${cur.cover ? `<img class="club-cover" src="${esc(cur.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="club-cover blank">${esc(cur.title.slice(0, 1))}</div>`}
+        <div class="grow">
+          <h3>${esc(cur.title)}</h3>
+          <p class="muted">${esc(cur.author)}${pages ? ` · ${pages} pages` : ''}</p>
+          <p class="muted small">Started ${fmtDate(cur.started_at)}</p>
+          ${yourBook}
+        </div>
+      </div>
+      ${owner ? `<details class="advanced"><summary>Change or finish the book</summary>
+        <button class="btn" data-action="club-finish" data-id="${esc(c.id)}">We've finished “${esc(cur.title)}”</button>
+        ${chooseBookForm(c, cur)}
+      </details>` : ''}
+    </section>
+    <section class="card section">
+      <h2>Progress</h2>
+      <ul class="club-progress">${progress}</ul>
+      ${!meIn?.status && !mine ? '<p class="muted small">Add the book to your library above to show your progress.</p>' : ''}
+    </section>
+    <section class="card section">
+      <h2>Goals & deadlines</h2>
+      ${goals.length ? `<ul class="goal-list">${goalRows}</ul>` : '<p class="muted">No deadlines yet. Agree one together, like “Part one by Sunday”.</p>'}
+      <details class="advanced"><summary>Add a goal</summary>
+        <form class="form" data-form="club-goal">
+          <input type="hidden" name="club" value="${esc(c.id)}">
+          <label>Goal <input name="title" maxlength="120" required placeholder="e.g. Finish part one"></label>
+          <div class="row gap wrap">
+            <label class="grow">Up to page <span class="muted small">optional</span><input name="page" type="number" min="1" max="${pages || 100000}" placeholder="${pages ? `1–${pages}` : ''}"></label>
+            <label class="grow">By <input name="due" type="date" required min="${today()}"></label>
+          </div>
+          <button class="btn primary">Add goal</button>
+        </form>
+      </details>
+    </section>
+    <section class="card section">
+      <div class="section-head"><h2>Shared passages <span class="muted small">${(R.passages || []).length}</span></h2>
+        ${mine ? `<button class="btn sm" data-action="club-new-passage" data-book="${mine.id}">+ Share a passage</button>` : ''}</div>
+      <p class="muted small">Everything in your notebook is private. To share a passage from this book, tap <b>❧ Share</b> on it, or tick “Share with the club” when you save it.</p>
+      ${passages ? `<div class="items club-passages">${passages}</div>` : '<p class="empty">Nothing shared yet.</p>'}
+    </section>
+    ${past}`;
+}
+
+// Club links for a library book, and whether you're signed in to use them.
+const clubLinksOf = (b) => (b && signedInLocally() ? b.clubLinks || [] : []);
+
+// Send your progress and shared passages to your clubs a moment after things change.
+let clubPushTimer = null;
+function scheduleClubPush(delay = 2000) {
+  if (!signedInLocally() || !db.books.some((b) => b.clubLinks?.length)) return;
+  clearTimeout(clubPushTimer);
+  clubPushTimer = setTimeout(async () => {
+    try {
+      const C = await loadClubs();
+      if (await C.reconcile(db)) {
+        const id = location.hash.match(/^#\/club\/([^/]+)/)?.[1];
+        if (id) { refetch('reading:' + id); render(); }
+      }
+    } catch { /* offline: try again on the next change or when the app opens */ }
+  }, delay);
+}
+onSave(() => scheduleClubPush());
+
 // After signing in from an invite, go back to it.
 function afterSignIn() {
   const code = localStorage.getItem('bibliophile:pending-join');
@@ -1089,6 +1244,7 @@ function afterSignIn() {
 }
 function clearClubData() {
   localStorage.removeItem('bibliophile:clubs-cache');
+  localStorage.removeItem('bibliophile:club-pushed');
   Clubs?.clearCache();
   for (const k of Object.keys(clubFetch)) delete clubFetch[k];
 }
@@ -1789,6 +1945,7 @@ function itemForm(item = {}, presetBook = '', opts = {}) {
       <label>Tags <input name="tags" value="${esc((item.tags || []).join(', '))}" placeholder="love, stoicism, to-share" list="tag-list"></label>
       <datalist id="tag-list">${allTags().map(([t]) => `<option value="${esc(t)}">`).join('')}</datalist>
       <label class="check"><input type="checkbox" name="favorite" ${item.favorite ? 'checked' : ''}> ♥ Favourite</label>
+      <label class="check club-share-field" hidden><input type="checkbox" name="shareClub"> <span>❧ Share with the club</span></label>
       <div class="row gap end">
         <button type="button" class="btn ghost" data-action="close">Cancel</button>
         ${isNew ? '<button class="btn" name="again" value="1">Save & add another</button>' : ''}
@@ -1796,7 +1953,15 @@ function itemForm(item = {}, presetBook = '', opts = {}) {
       </div>
     </form>`, (root) => {
     const f = $('form', root);
-    f.bookId.addEventListener('change', () => { $('.source-field', root).hidden = !!f.bookId.value; });
+    // Offer to share with the club when the passage is from a book you're reading with one.
+    const clubField = () => {
+      const links = clubLinksOf(getBook(f.bookId.value));
+      $('.club-share-field', root).hidden = !links.length;
+      if (links.length) $('.club-share-field span', root).textContent = '❧ Share with ' + links.map((l) => l.name).join(', ');
+      if (links.length && (opts.share || links.some((l) => item.sharedTo?.includes(l.cb)))) f.shareClub.checked = true;
+    };
+    clubField();
+    f.bookId.addEventListener('change', () => { $('.source-field', root).hidden = !!f.bookId.value; clubField(); });
     // Switching between "Word" and the passage types swaps the fields (and what's required).
     $$('input[name=kind]', root).forEach((r) => r.addEventListener('change', () => {
       const w = f.kind.value === 'word';
@@ -2032,11 +2197,70 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'club-link': case 'club-add-book': {
+      const R = Clubs.cachedReading(id), c = Clubs.cachedClub(id), cur = R?.current;
+      if (!cur) break;
+      const link = { club: id, cb: cur.id, name: c?.name || 'your book club' };
+      let b = a === 'club-link' ? getBook(el.dataset.local) : null;
+      if (!b) {
+        b = upsertBook({ title: cur.title, author: cur.author, cover: cur.cover || '', pages: cur.pages || 0, isbn: cur.isbn || '', status: 'reading', clubLinks: [link] });
+        ensureCover(b);
+        toast(`Added to your library — your progress now shows in ${link.name}`);
+      } else {
+        b.clubLinks = [...(b.clubLinks || []).filter((l) => l.club !== id), link];
+        if (!b.pages && cur.pages) b.pages = cur.pages;
+        if (b.status === 'want') { b.status = 'reading'; b.startedAt ||= today(); }
+        save();
+        toast(`Linked — your progress now shows in ${link.name}`);
+      }
+      scheduleClubPush(0);
+      break;
+    }
+    case 'club-finish':
+      if (!confirm('Mark this book as finished for the club? It moves to the books you\'ve read together.')) break;
+      try { await Clubs.finishBook(id); toast('Well read, everyone'); } catch (err) { toast(err.message); }
+      render();
+      break;
+    case 'club-goal-remove':
+      if (!confirm('Remove this goal?')) break;
+      try { await Clubs.removeGoal(id, el.dataset.goal); } catch (err) { toast(err.message); }
+      render();
+      break;
+    case 'club-share-item': {
+      const it = getItem(id); const links = clubLinksOf(getBook(it?.bookId));
+      if (!it || !links.length) break;
+      const on = links.some((l) => it.sharedTo?.includes(l.cb));
+      it.sharedTo = on ? (it.sharedTo || []).filter((cb) => !links.some((l) => l.cb === cb)) : [...new Set([...(it.sharedTo || []), ...links.map((l) => l.cb)])];
+      save();
+      toast(on ? 'No longer shared' : `Shared with ${links.map((l) => l.name).join(', ')}`);
+      scheduleClubPush(300);
+      break;
+    }
+    case 'club-unshare': {
+      const it = getItem(el.dataset.item);
+      if (it) { it.sharedTo = (it.sharedTo || []).filter((cb) => cb !== el.dataset.cb); save(); }
+      else { // shared from another device and since deleted here: tell the club directly
+        try { await (await loadCloud()).rpc('unshare_passage', { p_book: el.dataset.cb, p_item_id: el.dataset.item }); } catch (err) { toast(err.message); break; }
+      }
+      toast('No longer shared');
+      scheduleClubPush(0);
+      setTimeout(() => { const cid = location.hash.split('/')[2]; refetch('reading:' + cid); render(); }, 1200);
+      break;
+    }
+    case 'club-save-passage': {
+      const R = Clubs.cachedReading(id); const x = R?.passages?.find((p) => p.id === el.dataset.passage);
+      if (!x) break;
+      const mine = linkedBook(R.current?.id);
+      upsertItem({ kind: x.kind === 'word' ? 'word' : 'quote', text: x.text, note: x.note ? `${x.name}: ${x.note}` : `Shared by ${x.name}`, page: x.page, chapter: x.chapter, bookId: mine?.id || '', source: mine ? '' : `${R.current?.title || ''} (shared by ${x.name})` });
+      toast('Saved to your notebook');
+      break;
+    }
+    case 'club-new-passage': itemForm({}, el.dataset.book, { share: true }); break;
     case 'club-leave': {
       const msg = el.dataset.n === '1' ? 'You\'re the only member, so leaving closes the club. Leave?'
         : el.dataset.owner ? 'Leave this club? The longest-standing member will take over running it.' : 'Leave this club?';
       if (!confirm(msg)) break;
-      try { await Clubs.leaveClub(id); toast('You left the club'); location.hash = '#/clubs'; } catch (err) { toast(err.message); }
+      try { await Clubs.leaveClub(id); Clubs.forgetClub(db, id); save(); toast('You left the club'); location.hash = '#/clubs'; } catch (err) { toast(err.message); }
       break;
     }
     case 'cloud-open': ui.cloudOpen = true; await loadCloud(); Cloud.loadProviders(); render(); break;
@@ -2285,6 +2509,9 @@ document.addEventListener('submit', (e) => {
       page: fd.page.trim(), chapter: fd.chapter.trim(), tags: parseTags(fd.tags), favorite: !!fd.favorite,
     };
     if (fd.id) data.id = fd.id;
+    const links = clubLinksOf(getBook(fd.bookId));
+    if (links.length) data.sharedTo = fd.shareClub ? links.map((l) => l.cb) : [];
+    else if (fd.id && getItem(fd.id)?.sharedTo?.length) data.sharedTo = []; // moved to another book
     upsertItem(data);
     clearDraft('item');
     toast('Saved');
@@ -2304,6 +2531,24 @@ document.addEventListener('submit', (e) => {
     save(); applyTheme(); toast('Settings saved');
   } else if (type === 'cover-url') {
     saveChosenCover(getBook(fd.id), (fd.url || '').trim());
+  } else if (type === 'club-book') {
+    const local = fd.local ? getBook(fd.local) : null;
+    const b = local ? { title: local.title, author: local.author, cover: local.cover, pages: local.pages, isbn: local.isbn } : { title: (fd.title || '').trim(), author: (fd.author || '').trim(), pages: Number(fd.pages) || 0 };
+    if (!b.title) { toast('Choose a book from your library or type its title'); return; }
+    const btn = $('button.primary', form); btn.disabled = true;
+    Clubs.chooseBook(fd.club, b).then((cb) => {
+      const c = Clubs.cachedClub(fd.club);
+      if (local) { // the person choosing it is reading it too
+        local.clubLinks = [...(local.clubLinks || []).filter((l) => l.club !== fd.club), { club: fd.club, cb, name: c?.name || 'your book club' }];
+        if (local.status === 'want') { local.status = 'reading'; local.startedAt ||= today(); }
+        save(); scheduleClubPush(0);
+      }
+      toast(`Now reading “${b.title}” together`); render();
+    }).catch((err) => { toast(err.message); btn.disabled = false; });
+  } else if (type === 'club-goal') {
+    const btn = $('button.primary', form); btn.disabled = true;
+    Clubs.addGoal(fd.club, fd.title.trim(), fd.page, fd.due).then(() => { toast('Goal added'); render(); })
+      .catch((err) => { toast(err.message); btn.disabled = false; });
   } else if (type === 'club-new' || type === 'club-join' || type === 'club-edit') {
     const btn = $('button.primary', form); const label = btn.textContent; btn.disabled = true; btn.textContent = 'Just a moment…';
     const done = () => { btn.disabled = false; btn.textContent = label; };
@@ -2358,6 +2603,7 @@ Sound.mount($('#sound-dock'));
 render();
 Spotify.handleRedirect().then((r) => { if (!r) return; render(); toast(r.ok ? 'Spotify connected — pick a playlist in the reading room' : r.message); })
   .catch(() => toast('Spotify sign-in failed — try again'));
+setTimeout(() => scheduleClubPush(0), 4000); // anything waiting to reach your clubs since last time
 // Optional sync: only loaded if you've switched it on (or are coming back from signing in).
 if (cloudWanted() || /[?&]auth=cloud|[#&](access_token|error_description)=/.test(location.search + location.hash)) {
   loadCloud().then(async (C) => {
