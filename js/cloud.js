@@ -484,3 +484,22 @@ function stop() {
   clearTimeout(timer);
   // The save hook stays registered but does nothing while signed out.
 }
+
+// ---------- calls used by book clubs ----------
+export const isSignedIn = () => !!session() && !!config();
+export const myUserId = () => session()?.user?.id || '';
+export async function rpc(name, args = {}) {
+  try { return await rest('/rest/v1/rpc/' + name, { method: 'POST', body: args }); }
+  catch (e) { throw e.offline ? new Error('You\'re offline. Try again when you\'re connected.') : e; }
+}
+// Without signing in (used only for the invite preview).
+export async function publicRpc(name, args = {}) {
+  const c = config();
+  if (!c) throw new Error('not configured');
+  const res = await fetch(`${c.url}/rest/v1/rpc/${name}`, {
+    method: 'POST', headers: { apikey: c.anonKey, 'content-type': 'application/json' }, body: JSON.stringify(args),
+  }).catch(() => { throw new Error('You\'re offline. Try again when you\'re connected.'); });
+  const j = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(j?.message || 'Something went wrong.');
+  return j;
+}

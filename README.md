@@ -82,6 +82,15 @@ No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (
 - **Leaving:** sign out at any time to return to personal mode with everything kept on the device, or delete your cloud copy or whole account from Settings.
 - **What stays on the device:** your Gemini key, your Spotify sign-in, and cover photos you uploaded yourself.
 
+**Book club (optional, needs sync)**
+- Once you're signed in, a **Book club** tab appears. In personal mode it stays hidden.
+- **Starting and joining:** start a club and send friends its invite link, or join from a link you're sent. Up to 10 people per club.
+- **Running a club:**
+  - Members choose the name the club sees.
+  - Whoever runs the club can rename it, remove people, or make a new invite link, which stops the old one working.
+  - If they leave, the longest-standing member takes over.
+- **Coming next:** a shared book with everyone's progress, passages you choose to share, and goals and deadlines.
+
 **Keyboard shortcuts:** `n` new highlight · `b` new book · `/` search · `r` review · `t` timer · `1`–`3` answer during review
 
 **Home-screen shortcuts:** once installed, long-press the app icon (Android, and desktop Chrome/Edge) for *Start reading timer*, *Save a passage* and *Daily review*.
@@ -118,6 +127,7 @@ js/covers.js          cover lookup (Open Library → Google Books), saved copies
 js/ai.js              Gemini calls, review tidying, caption / reel templates
 js/cloud.js           optional sign-in and sync (loaded only when switched on)
 js/cloud-config.js    your Supabase project URL and anon key, if built in
-supabase/schema.sql   the database table and security rules for sync
+js/clubs.js           book clubs: create, invite, join, members
+supabase/schema.sql   database tables, security rules and club functions (safe to re-run)
 sw.js, manifest.webmanifest, icons/   offline support and installable app
 ```

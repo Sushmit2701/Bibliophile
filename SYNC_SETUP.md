@@ -21,7 +21,11 @@ You'll need the address of your Bibliophile app, for example `https://sushmit270
 2. Open [`supabase/schema.sql`](supabase/schema.sql) from this repository, copy all of it, and paste it in.
 3. Click **Run**. You should see *Success. No rows returned.*
 
-This creates one table where each row belongs to one signed-in person. *Row-level security* makes sure each person can only ever read or change their own rows.
+This creates:
+- the sync table, where each row belongs to one signed-in person, and *row-level security* makes sure each person can only ever read or change their own rows
+- the book club tables, which can only be reached through functions that check you're a member first
+
+**When the app is updated** with new features (for example, the next book club steps), run the latest `schema.sql` again the same way. It's safe to re-run, and it never deletes your data.
 
 ## 3. Tell Supabase where the app lives (2 min)
 
@@ -92,6 +96,12 @@ Then sign in. The first time, the library on that device is combined with anythi
   - Your Gemini key and Spotify sign-in.
   - Cover photos you uploaded yourself. Covers found online appear everywhere.
 - **Signing out:** everything stays on the device and you're back in personal mode. **Delete my data** in Settings removes your cloud copy, or your whole account.
+
+## Book clubs
+
+Once you're signed in, a **Book club** tab appears. Start a club, then send its invite link to friends. Clubs hold up to 10 people.
+
+For friends to join, their copy of the app must be connected to **your** Supabase project. The easy way is to build your project details into `js/cloud-config.js` (step 6), so that everyone who opens your app address is ready to go. Friends sign in with their own Google account or email. They never see your library, only what you choose to share with the club.
 
 ## Good to know
 

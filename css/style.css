@@ -1106,3 +1106,32 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
   .nav { padding-left: .15rem; padding-right: .15rem; }
   .nav a { font-size: .52rem; letter-spacing: .02em; padding-left: .1rem; padding-right: .1rem; }
 }
+
+/* ---------- Book clubs ---------- */
+.nav a[hidden] { display: none !important; }
+.club-points { margin: .4rem 0 1rem; padding-left: 1.1rem; line-height: 1.7; }
+.club-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1.2rem; margin-bottom: 1.6rem; }
+.club-card { display: flex; flex-direction: column; gap: .35rem; padding: 1.3rem 1.4rem; color: inherit; text-decoration: none; transition: transform .15s; }
+.club-card:hover { transform: translateY(-2px); }
+.club-card h3 { margin: 0; font: 500 1.35rem/1.2 var(--display); }
+.club-card p { margin: 0; }
+.club-mark { color: var(--accent-fill); font-size: 1.3rem; line-height: 1; }
+.club-meta { font: 600 .62rem var(--sans); text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin-top: auto; padding-top: .4rem; }
+.member-list { list-style: none; padding: 0; margin: .4rem 0 0; display: grid; gap: .7rem; }
+.member-list li { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+.avatar { width: 2.2rem; height: 2.2rem; border-radius: 50%; display: grid; place-items: center; flex: none; font: 600 .78rem var(--sans); color: var(--accent); background: var(--bg); box-shadow: var(--raise-sm); }
+.m-name { font-weight: 500; }
+.tag-pill { font: 600 .58rem var(--sans); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 999px; padding: .15rem .5rem; }
+.member-list .link-btn { margin-left: auto; }
+.member-list .link-btn + .link-btn { margin-left: 0; }
+.invite-link { display: block; overflow-wrap: anywhere; padding: .6rem .8rem; border-radius: 10px; box-shadow: var(--inset); font-size: .82rem; margin: .4rem 0 .9rem; }
+.join-card { max-width: 34rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .3rem; }
+.join-card h2 { font-size: 2rem; margin: 0; }
+.join-card .form { width: 100%; text-align: left; margin-top: .8rem; }
+.join-card .btn { margin-top: .8rem; }
+.club-soon { opacity: .85; }
+.club-head { display: block; }
+.club-head .lede { margin: .5rem 0 0; }
+.club-leave { margin: .6rem 0 0; }
+details.advanced + .club-leave { margin-top: 1rem; }
+.club-new + p { margin-bottom: 0; }

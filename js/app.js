@@ -224,7 +224,11 @@ const routes = {
   timer: viewTimer,
   foryou: viewForYou,
   settings: viewSettings,
+  clubs: viewClubs,
+  club: viewClub,
+  join: viewJoin,
 };
+const NAV_ALIAS = { club: 'clubs', join: 'clubs' };
 const ui = { // transient UI state that survives re-renders
   libStatus: 'all', libSort: db.settings.libSort || 'year', libQuery: '',
   nKind: 'all', nQuery: '', nTag: '', nFav: false, nBook: '',
@@ -234,7 +238,10 @@ const ui = { // transient UI state that survives re-renders
 function render() {
   const [route, param] = location.hash.replace(/^#\/?/, '').split('/');
   const view = routes[route] || viewHome;
-  $$('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === (routes[route] ? route : '')));
+  const navRoute = NAV_ALIAS[route] || (routes[route] ? route : '');
+  $$('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === navRoute));
+  // The Book club tab appears once you're signed in; personal mode looks exactly as before.
+  $$('.nav-club').forEach((a) => { a.hidden = !localStorage.getItem(CLOUD_SESSION) && navRoute !== 'clubs'; });
   const main = $('#main');
   const scroll = window.scrollY;
   const sameRoute = main.dataset.route === location.hash;
@@ -257,7 +264,7 @@ function render() {
 window.addEventListener('hashchange', () => {
   // The link from a sign-in email, opened in a tab where the app was already running.
   if (/^#(access_token|error_description)=/.test(location.hash)) {
-    loadCloud().then((C) => C.handleRedirect()).then((r) => { if (r) toast(r.ok ? `Signed in as ${r.email} — syncing your library` : r.message); render(); });
+    loadCloud().then((C) => C.handleRedirect()).then((r) => { if (r) toast(r.ok ? `Signed in as ${r.email} — syncing your library` : r.message); render(); if (r?.ok) afterSignIn(); });
     return;
   }
   if (location.hash.split('/')[1] !== 'review') ui.reviewQueue = null;
@@ -908,6 +915,182 @@ function accountSection() {
     ${signin}
     ${st.builtIn ? '' : `<details class="advanced"><summary>Sync server</summary>${setup}</details>`}
   </section>`;
+}
+
+// ============ BOOK CLUBS (needs sync) ============
+let Clubs = null;
+async function loadClubs() {
+  await loadCloud();
+  Clubs ||= await import('./clubs.js');
+  return Clubs;
+}
+const signedInLocally = () => !!localStorage.getItem(CLOUD_SESSION);
+// Fetch club data in the background at most every 20 s per page, then redraw if you're still there.
+const clubFetch = {};
+function freshen(key, fn) {
+  const f = clubFetch[key] ||= { at: 0, busy: false, err: '' };
+  if (f.busy || Date.now() - f.at < 20000) return f;
+  f.busy = true;
+  const here = location.hash;
+  loadClubs().then(() => fn()).then(() => { f.err = ''; }).catch((e) => { f.err = e.message; })
+    .finally(() => { f.busy = false; f.at = Date.now(); if (location.hash === here) render(); });
+  return f;
+}
+const refetch = (key) => { if (clubFetch[key]) clubFetch[key].at = 0; };
+const initials = (n) => esc(String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase());
+const clubHead = (sub = '') => `<header class="page-head"><h1>Book club</h1><p class="lede muted">${sub || 'Read together with friends: one book, everyone\'s progress, the passages you choose to share, and a deadline to keep you going.'}</p></header>`;
+
+function viewClubs() {
+  if (!signedInLocally()) {
+    return clubHead() + `<section class="card section club-intro">
+      <h2>Read with friends</h2>
+      <p>Start a book club with up to ${10} friends, or join one from an invite link.</p>
+      <ul class="club-points">
+        <li>See how far everyone has got in the book you're reading together.</li>
+        <li>Share the passages you choose. Everything else stays private, as it is now.</li>
+        <li>Agree goals and deadlines, with a nudge before they arrive.</li>
+      </ul>
+      <p class="muted small">Book clubs use sync, so you'll need to sign in first. Your own library stays private: nothing is shared unless you share it.</p>
+      <a class="btn primary" href="#/settings" data-action="cloud-open-from-club">Sign in to start</a>
+    </section>`;
+  }
+  const f = freshen('list', () => Clubs.refreshList());
+  const list = Clubs?.cachedList();
+  const myName = Clubs?.cachedName() || db.settings.name || '';
+  const cards = list?.length ? `<div class="club-grid">${list.map((c) => `
+      <a class="card club-card" href="#/club/${esc(c.id)}">
+        <span class="club-mark">❧</span>
+        <h3>${esc(c.name)}</h3>
+        ${c.description ? `<p class="muted small">${esc(c.description)}</p>` : ''}
+        <span class="club-meta">${plural(Number(c.members), 'member')}${c.role === 'owner' ? ' · you run it' : ''}</span>
+      </a>`).join('')}</div>` : '';
+  const status = !list && f.busy ? '<p class="muted">Loading your book clubs…</p>'
+    : f.err ? `<p class="sync-err small">${esc(f.err)} <a href="#" data-action="clubs-retry">Try again</a></p>` : '';
+  return clubHead() + status + cards + `
+    <section class="card section">
+      <details class="advanced club-new" ${list && !list.length ? 'open' : ''}><summary>Start a book club</summary>
+        <form class="form" data-form="club-new">
+          <label>Club name <input name="name" maxlength="60" required placeholder="e.g. Sunday Readers"></label>
+          <label>What it's about<textarea name="description" maxlength="500" rows="2" placeholder="Slow classics, one a month"></textarea></label>
+          <label>Your name in book clubs <input name="me" maxlength="40" required value="${esc(myName)}" placeholder="How friends will see you"></label>
+          <button class="btn primary">Create club</button>
+        </form>
+      </details>
+      <p class="muted small">Got an invite link? Just open it. Clubs hold up to ${10} people.</p>
+    </section>`;
+}
+
+function viewClub(id) {
+  if (!signedInLocally()) return viewClubs();
+  const f = freshen('club:' + id, () => Clubs.refreshClub(id));
+  const c = Clubs?.cachedClub(id);
+  if (!c) {
+    if (f.err) return clubHead(' ') + `<p class="empty">${esc(f.err)} <a href="#/clubs">Back to your book clubs</a></p>`;
+    return clubHead(' ') + '<p class="muted">Loading…</p>';
+  }
+  const owner = c.role === 'owner';
+  const members = c.members || [];
+  const full = members.length >= 10;
+  const link = Clubs.inviteLink(c.invite_code);
+  return `
+    <a href="#/clubs" class="back">← Book clubs</a>
+    <header class="page-head club-head"><h1>${esc(c.name)}</h1>${c.description ? `<p class="lede muted">${esc(c.description)}</p>` : ''}</header>
+    ${f.err ? `<p class="sync-err small">${esc(f.err)}</p>` : ''}
+    <section class="card section">
+      <h2>Members <span class="muted small">${members.length} of 10</span></h2>
+      <ul class="member-list">${members.map((m) => {
+        const me = m.user_id === c.me;
+        return `<li><span class="avatar">${initials(m.name)}</span>
+          <span class="m-name">${esc(m.name)}${me ? ' <span class="muted small">(you)</span>' : ''}</span>
+          ${m.role === 'owner' ? '<span class="tag-pill">runs the club</span>' : ''}
+          ${me ? '<button class="link-btn small" data-action="club-myname">Change my name</button>' : ''}
+          ${owner && !me ? `<button class="link-btn small danger" data-action="club-remove" data-id="${esc(c.id)}" data-user="${esc(m.user_id)}" data-name="${esc(m.name)}">Remove</button>` : ''}
+        </li>`;
+      }).join('')}</ul>
+    </section>
+    <section class="card section">
+      <h2>Invite friends</h2>
+      ${full ? '<p class="muted">The club is full (10 people).</p>' : `
+        <p class="muted small">Anyone with this link can join until the club has 10 people. Send it only to people you want in the club.</p>
+        <div class="copy-row"><code class="invite-link">${esc(link)}</code></div>
+        <div class="row gap wrap">
+          <button class="btn primary" data-action="club-copy" data-link="${esc(link)}">Copy link</button>
+          ${navigator.share ? `<button class="btn" data-action="club-share" data-link="${esc(link)}" data-name="${esc(c.name)}">Share…</button>` : ''}
+          ${owner ? `<button class="btn ghost" data-action="club-reset" data-id="${esc(c.id)}">Make a new link</button>` : ''}
+        </div>
+        ${owner ? '<p class="muted small">Making a new link stops the old one from working. People already in the club stay.</p>' : ''}`}
+    </section>
+    <section class="card section club-soon">
+      <h2>Reading together <span class="muted small">coming next</span></h2>
+      <p class="muted">Soon you'll pick a book to read together here, see everyone's progress, share passages from your notebook, and set goals and deadlines.</p>
+    </section>
+    <section class="card section">
+      ${owner ? `<details class="advanced"><summary>Edit club</summary>
+        <form class="form" data-form="club-edit">
+          <input type="hidden" name="id" value="${esc(c.id)}">
+          <label>Club name <input name="name" maxlength="60" required value="${esc(c.name)}"></label>
+          <label>What it's about <textarea name="description" maxlength="500" rows="2">${esc(c.description)}</textarea></label>
+          <button class="btn primary">Save</button>
+        </form>
+      </details>` : ''}
+      <p class="club-leave"><button class="btn ghost danger sm" data-action="club-leave" data-id="${esc(c.id)}" data-owner="${owner ? 1 : ''}" data-n="${members.length}">Leave this club</button></p>
+    </section>`;
+}
+
+function viewJoin(code) {
+  const st = Cloud?.getStatus();
+  if (!Cloud) { loadCloud().then(render); return clubHead(' ') + '<p class="muted">Opening your invite…</p>'; }
+  if (!st.configured) {
+    return clubHead('You\'ve been invited to a book club.') + `<section class="card section">
+      <p>This copy of Bibliophile isn't connected to a book club server yet, so it can't open the invite.</p>
+      <p class="muted small">Ask the person who invited you to send the link from their copy of the app, or set up sync yourself in Settings.</p>
+      <a class="btn" href="#/settings">Settings</a></section>`;
+  }
+  const key = 'join:' + code;
+  const f = clubFetch[key] ||= { at: 0, busy: false, err: '', data: undefined };
+  if (!f.busy && f.data === undefined && !f.err) {
+    f.busy = true;
+    loadClubs().then(() => Clubs.preview(code, st.signedIn)).then((d) => { f.data = d; }).catch((e) => { f.err = e.message; })
+      .finally(() => { f.busy = false; if (location.hash === '#/join/' + code) render(); });
+  }
+  if (f.busy || f.data === undefined && !f.err) return clubHead(' ') + '<p class="muted">Opening your invite…</p>';
+  if (f.err || !f.data) return clubHead(' ') + `<section class="card section"><p>${f.err ? esc(f.err) : 'This invite link doesn\'t work any more. Ask for a new one.'}</p><a class="btn" href="#/clubs">Book clubs</a></section>`;
+  const c = f.data;
+  const intro = `<section class="card section join-card">
+      <span class="club-mark">❧</span>
+      <p class="muted small">You've been invited to join</p>
+      <h2>${esc(c.name)}</h2>
+      ${c.description ? `<p class="muted">${esc(c.description)}</p>` : ''}
+      <p class="club-meta">${plural(Number(c.members), 'member')} so far · up to 10</p>`;
+  if (c.member) return clubHead(' ') + intro + `<a class="btn primary" href="#/club/${esc(c.id)}">You're in — open the club</a></section>`;
+  if (Number(c.members) >= 10) return clubHead(' ') + intro + '<p>Sorry, this club is full.</p></section>';
+  if (!st.signedIn) {
+    return clubHead(' ') + intro + `
+      <p class="muted small">To join, sign in first. Your own library stays private; only what you choose to share is shared with the club.</p>
+      <button class="btn primary" data-action="club-signin-to-join" data-code="${esc(code)}">Sign in to join</button></section>`;
+  }
+  return clubHead(' ') + intro + `
+    <form class="form" data-form="club-join">
+      <input type="hidden" name="code" value="${esc(code)}">
+      <label>Your name in book clubs <input name="me" maxlength="40" required value="${esc(Clubs?.cachedName() || db.settings.name || '')}" placeholder="How friends will see you"></label>
+      <button class="btn primary">Join the club</button>
+    </form>
+    <p class="muted small">Members see your name, your progress in the club's book, and the passages you share. Nothing else from your library.</p>
+  </section>`;
+}
+
+// After signing in from an invite, go back to it.
+function afterSignIn() {
+  const code = localStorage.getItem('bibliophile:pending-join');
+  if (!code) return;
+  localStorage.removeItem('bibliophile:pending-join');
+  delete clubFetch['join:' + code];
+  location.hash = '#/join/' + code;
+}
+function clearClubData() {
+  localStorage.removeItem('bibliophile:clubs-cache');
+  Clubs?.clearCache();
+  for (const k of Object.keys(clubFetch)) delete clubFetch[k];
 }
 
 // ============ READING TIMER ============
@@ -1817,6 +2000,45 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'clubs-retry': for (const k of Object.keys(clubFetch)) refetch(k); render(); break;
+    case 'cloud-open-from-club': e.preventDefault(); ui.cloudOpen = true; location.hash = '#/settings'; await loadCloud(); Cloud.loadProviders(); render(); break;
+    case 'club-signin-to-join':
+      localStorage.setItem('bibliophile:pending-join', el.dataset.code);
+      ui.cloudOpen = true; location.hash = '#/settings';
+      await loadCloud(); Cloud.loadProviders(); render();
+      setTimeout(() => $('#account')?.scrollIntoView({ behavior: 'smooth' }), 50);
+      break;
+    case 'club-copy':
+      try { await navigator.clipboard.writeText(el.dataset.link); toast('Invite link copied'); }
+      catch { prompt('Copy this link:', el.dataset.link); }
+      break;
+    case 'club-share':
+      navigator.share({ title: el.dataset.name, text: `Join my book club "${el.dataset.name}" on Bibliophile`, url: el.dataset.link }).catch(() => {});
+      break;
+    case 'club-reset':
+      if (!confirm('Make a new invite link? The old one will stop working.')) break;
+      try { await Clubs.resetInvite(id); toast('New link ready'); } catch (err) { toast(err.message); }
+      render();
+      break;
+    case 'club-remove':
+      if (!confirm(`Remove ${el.dataset.name} from the club?`)) break;
+      try { await Clubs.removeMember(id, el.dataset.user); toast(`${el.dataset.name} was removed`); } catch (err) { toast(err.message); }
+      render();
+      break;
+    case 'club-myname': {
+      const n = prompt('Your name in book clubs:', Clubs.cachedName() || db.settings.name || '');
+      if (!n || !n.trim()) break;
+      try { await Clubs.setName(n); await Clubs.refreshClub(location.hash.split('/')[2]); toast('Name updated'); } catch (err) { toast(err.message); }
+      render();
+      break;
+    }
+    case 'club-leave': {
+      const msg = el.dataset.n === '1' ? 'You\'re the only member, so leaving closes the club. Leave?'
+        : el.dataset.owner ? 'Leave this club? The longest-standing member will take over running it.' : 'Leave this club?';
+      if (!confirm(msg)) break;
+      try { await Clubs.leaveClub(id); toast('You left the club'); location.hash = '#/clubs'; } catch (err) { toast(err.message); }
+      break;
+    }
     case 'cloud-open': ui.cloudOpen = true; await loadCloud(); Cloud.loadProviders(); render(); break;
     case 'cloud-close': ui.cloudOpen = false; if (Cloud && !Cloud.getStatus().configured) Cloud = null; render(); break;
     case 'cloud-forget-config': Cloud.setConfig('', ''); render(); break;
@@ -1830,24 +2052,25 @@ document.addEventListener('click', async (e) => {
     case 'cloud-signout':
       el.disabled = true;
       await Cloud.signOut();
+      clearClubData();
       ui.cloudOpen = false;
       toast('Signed out. Everything is still on this device.');
       render();
       break;
     case 'cloud-delete-copy':
       if (!confirm('Delete your library from the cloud and sign out? It stays on this device. Your other devices keep their copy until you sign out there too.')) break;
-      try { await Cloud.deleteCloudCopy(); toast('Cloud copy deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
+      try { await Cloud.deleteCloudCopy(); clearClubData(); toast('Cloud copy deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
       render();
       break;
     case 'cloud-delete-account':
       if (!confirm('Delete your account and everything stored in it? Your library stays on this device.') || prompt('Type DELETE to confirm') !== 'DELETE') break;
-      try { await Cloud.deleteAccount(); toast('Account deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
+      try { await Cloud.deleteAccount(); clearClubData(); toast('Account deleted. You\'re back in personal mode.'); } catch (err) { toast('Couldn\'t delete: ' + err.message); }
       render();
       break;
     case 'export-md': download(`bibliophile-${today()}.md`, allMarkdown()); break;
     case 'wipe':
       if (confirm('Erase ALL books, highlights and settings from this device?' + (Cloud?.getStatus().signedIn ? ' You\'ll be signed out first, so your cloud copy and other devices are not affected.' : '')) && prompt('Type ERASE to confirm') === 'ERASE') {
-        if (Cloud?.getStatus().signedIn) await Cloud.signOut();
+        if (Cloud?.getStatus().signedIn) { await Cloud.signOut(); clearClubData(); }
         db.books = []; db.items = []; db.reviewLog = {}; clearCovers(); save(); toast('All data erased');
       }
       break;
@@ -2081,6 +2304,13 @@ document.addEventListener('submit', (e) => {
     save(); applyTheme(); toast('Settings saved');
   } else if (type === 'cover-url') {
     saveChosenCover(getBook(fd.id), (fd.url || '').trim());
+  } else if (type === 'club-new' || type === 'club-join' || type === 'club-edit') {
+    const btn = $('button.primary', form); const label = btn.textContent; btn.disabled = true; btn.textContent = 'Just a moment…';
+    const done = () => { btn.disabled = false; btn.textContent = label; };
+    const job = type === 'club-new' ? Clubs.createClub(fd.name.trim(), (fd.description || '').trim(), fd.me.trim()).then((id) => { toast('Book club created — now invite your friends'); location.hash = '#/club/' + id; })
+      : type === 'club-join' ? Clubs.joinClub(fd.code, fd.me.trim()).then((id) => { delete clubFetch['join:' + fd.code]; toast('Welcome to the club'); location.hash = '#/club/' + id; })
+      : Clubs.updateClub(fd.id, fd.name.trim(), (fd.description || '').trim()).then(() => { toast('Saved'); render(); });
+    job.catch((err) => { toast(err.message); done(); });
   } else if (type === 'cloud-config') {
     try { Cloud.setConfig(fd.url, fd.anonKey); toast('Saved'); Cloud.loadProviders(); } catch (err) { toast(err.message); }
     render();
@@ -2090,7 +2320,7 @@ document.addEventListener('submit', (e) => {
       .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Email me a sign-in code'; });
   } else if (type === 'cloud-code') {
     const btn = $('button.primary', form); btn.disabled = true; btn.textContent = 'Signing in…';
-    Cloud.verifyEmailCode(fd.code).then((r) => { toast(`Signed in as ${r.email} — syncing your library`); render(); })
+    Cloud.verifyEmailCode(fd.code).then((r) => { toast(`Signed in as ${r.email} — syncing your library`); render(); afterSignIn(); })
       .catch((err) => { toast(err.message); btn.disabled = false; btn.textContent = 'Sign in'; });
   } else if (type === 'spotify') {
     db.settings.spotifyClientId = (fd.spotifyClientId || '').trim();
@@ -2135,6 +2365,7 @@ if (cloudWanted() || /[?&]auth=cloud|[#&](access_token|error_description)=/.test
     const r = await C.handleRedirect();
     if (r) { toast(r.ok ? `Signed in as ${r.email} — syncing your library` : r.message); }
     render();
+    if (r?.ok) afterSignIn();
   }).catch(() => {});
 }
 onCoverChange(render);
