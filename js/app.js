@@ -258,6 +258,17 @@ function render() {
   renderTimerBar(route);
   Sound.show(route === 'timer');
   document.body.classList.toggle('route-timer', route === 'timer');
+  // Opening a Library card: the page grows out of the card you tapped.
+  if (ui.zoomFrom) {
+    const r = ui.zoomFrom; ui.zoomFrom = null;
+    if (route === 'library' && param && main.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      main.classList.remove('enter');
+      const m = main.getBoundingClientRect();
+      const from = `inset(${Math.max(0, r.top - m.top)}px ${Math.max(0, m.right - r.right)}px ${Math.max(0, m.bottom - r.bottom)}px ${Math.max(0, r.left - m.left)}px round 22px)`;
+      main.animate([{ clipPath: from, opacity: .7 }, { clipPath: 'inset(0px 0px 0px 0px round 0px)', opacity: 1 }], { duration: 460, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      $('.ledge', main)?.animate([{ transform: 'translateX(40px)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 520, delay: 160, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+    }
+  }
   // Activity grids open on the most recent weeks.
   $$('.heatmap').forEach((h) => { h.scrollLeft = h.scrollWidth; });
 }
@@ -430,18 +441,24 @@ function shelfBook(b) {
     ${cover(b)}
     <div class="shelf-title">${esc(b.title)}</div>
     <div class="muted small">${esc(b.author)}</div>
+    ${(b.status === 'reading' || b.status === 'paused') && b.pages ? `<div class="progress tile-progress" title="p. ${b.currentPage || 0} of ${b.pages}"><span style="width:${Math.min(100, Math.round(((b.currentPage || 0) / b.pages) * 100))}%"></span></div>` : ''}
     <div class="small shelf-meta">${b.rating ? stars(b.rating) : `<span class="status-pill s-${b.status}">${STATUSES[b.status]}</span>`}${n ? ` <span class="muted">· ${n} ❝</span>` : ''}${when && ui.libSort === 'year' ? ` <span class="muted">· ${when}</span>` : ''}</div>
   </a>`;
 }
 
 // "By year read": what you're reading now, then each year's finished books (newest first), then the rest.
-function libraryByYear(list) {
+// The groups are the same as always; each one is drawn as a card that opens onto its own page.
+function libraryGroups(list) {
   const year = String(new Date().getFullYear());
   const goal = db.settings.yearlyGoal || 0;
   const byRecent = (x, y) => (y.finishedAt || '').localeCompare(x.finishedAt || '') || (y.updatedAt || '').localeCompare(x.updatedAt || '');
+  const pct = (b) => (b.pages ? Math.min(100, Math.round(((b.currentPage || 0) / b.pages) * 100)) : 0);
   const groups = [];
-  const reading = list.filter((b) => b.status === 'reading');
-  if (reading.length) groups.push({ key: 'reading', title: 'Reading now', books: reading });
+  const reading = list.filter((b) => b.status === 'reading').sort((x, y) => pct(y) - pct(x));
+  if (reading.length) {
+    groups.push({ key: 'reading', title: 'Reading now', label: 'On the nightstand', books: reading, ledge: 'Closest to finishing',
+      line: reading.slice(0, 2).map((b) => `${b.title.split(' ').slice(0, 3).join(' ')}${b.pages ? ` ${pct(b)}%` : ''}`).join(' · ') });
+  }
   const finished = list.filter((b) => b.status === 'finished');
   const years = new Map();
   for (const b of finished) { const y = (b.finishedAt || '').slice(0, 4) || 'undated'; if (!years.has(y)) years.set(y, []); years.get(y).push(b); }
@@ -451,30 +468,65 @@ function libraryByYear(list) {
     const rated = books.filter((x) => x.rating);
     const avg = rated.length ? rated.reduce((t, x) => t + x.rating, 0) / rated.length : 0;
     groups.push({
-      key: y, year: y, title: y, books,
-      count: plural(books.length, 'book'),
-      meta: [y === year && goal ? `${books.length} of your ${goal}-book goal` : '', pages ? `${pages.toLocaleString()} pages` : '', avg ? `average ${fmtRating(Math.round(avg * 10) / 10)}★` : ''].filter(Boolean).join(' · '),
+      key: y, year: y, title: y, books, label: y === year ? 'This year' : 'Finished in ' + y, ledge: `Top rated in ${y}`,
+      goalText: y === year && goal ? `${books.length} of your ${goal}-book goal` : '',
+      facts: [pages ? `${pages.toLocaleString()} pages` : '', avg ? `average ${fmtRating(Math.round(avg * 10) / 10)}★` : ''].filter(Boolean),
       progress: y === year && goal ? Math.min(100, (books.length / goal) * 100) : null,
     });
   });
-  if (years.has('undated')) groups.push({ key: 'undated', title: 'Finished, date not set', books: years.get('undated'), note: 'Add a finish date (Edit) to place these in a year.' });
+  if (years.has('undated')) groups.push({ key: 'undated', title: 'Finished, date not set', label: 'Finished', books: years.get('undated'), line: 'Add a finish date (Edit) to place these in a year.' });
+  const subs = { want: 'Up next', paused: 'Set aside for now', abandoned: 'Not for me, this time' };
   for (const st of ['want', 'paused', 'abandoned']) {
     const books = list.filter((b) => b.status === st);
-    if (books.length) groups.push({ key: st, title: STATUSES[st], books: books.sort((x, y) => (y.updatedAt || '').localeCompare(x.updatedAt || '')) });
+    if (books.length) groups.push({ key: st, title: STATUSES[st], label: subs[st], line: subs[st], books: books.sort((x, y) => (y.updatedAt || '').localeCompare(x.updatedAt || '')), ledge: st === 'want' ? 'Most recently added' : '' });
   }
-  return groups.map((g) => `
-    <section class="shelf-group ${g.year ? 'year-group' : ''}">
-      <div class="shelf-group-head">
-        <h2>${esc(g.title)}${g.count ? ` <span class="group-count">${g.count}</span>` : ` <span class="group-count">${g.books.length}</span>`}</h2>
-        ${g.meta ? `<span class="muted small">${esc(g.meta)}</span>` : ''}
-      </div>
-      ${g.progress != null ? `<div class="progress year-progress"><span style="width:${g.progress}%"></span></div>` : ''}
-      ${g.note ? `<p class="muted small">${esc(g.note)}</p>` : ''}
-      <div class="shelf">${g.books.map(shelfBook).join('')}</div>
-    </section>`).join('');
+  return groups;
 }
 
-function viewLibrary() {
+function libraryByYear(list) {
+  return `<div class="group-cards">${libraryGroups(list).map((g) => {
+    const fan = g.books.slice(0, 3);
+    return `<a class="group-card ${g.year ? 'is-year' : ''}" href="#/library/${encodeURIComponent(g.key)}" data-zoom aria-label="${esc(g.title)}, ${plural(g.books.length, 'book')}">
+      <div class="gc-meta"><span>${esc(g.label)}</span><span class="gc-count">${g.books.length}</span></div>
+      <h2>${esc(g.title)}</h2>
+      ${g.year ? `<p class="gc-facts">${[g.goalText, ...g.facts].filter(Boolean).map(esc).join(' · ')}</p>` : `<p class="gc-line">${esc(g.line || '')}</p>`}
+      ${g.progress != null ? `<div class="progress gc-goal"><span style="width:${g.progress}%"></span></div>` : ''}
+      <div class="fan n${fan.length}" aria-hidden="true">${fan.map((b) => cover(b)).join('')}</div>
+    </a>`;
+  }).join('')}</div>`;
+}
+
+// One group on its own page: a wooden ledge of covers, then every book in the group.
+function viewLibraryGroup(key) {
+  const q = ui.libQuery.toLowerCase();
+  const list = db.books.filter((b) => (ui.libStatus === 'all' || (ui.libStatus === 'top' ? (b.rating || 0) >= 4 : b.status === ui.libStatus))
+    && (!q || `${b.title} ${b.author} ${(b.tags || []).join(' ')}`.toLowerCase().includes(q)));
+  const g = libraryGroups(list).find((x) => x.key === key);
+  const back = '<a href="#/library" class="back">← Library</a>';
+  if (!g) return back + '<p class="empty">Nothing here any more. <a href="#/library">Back to your library</a></p>';
+  const gq = (ui.groupQuery || '').toLowerCase();
+  const shown = g.books.filter((b) => !gq || `${b.title} ${b.author} ${(b.tags || []).join(' ')}`.toLowerCase().includes(gq));
+  const ledge = !g.ledge || g.books.length < 2 ? [] : g.year ? [...g.books].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 10) : g.books.slice(0, 10);
+  const filterNote = ui.libStatus !== 'all' || ui.libQuery ? `<p class="muted small group-filter">Showing ${ui.libStatus === 'top' ? '★ 4 and up' : ui.libStatus !== 'all' ? STATUSES[ui.libStatus].toLowerCase() : 'all'}${ui.libQuery ? ` matching “${esc(ui.libQuery)}”` : ''} · <a href="#" data-action="lib-status" data-value="all">show everything</a></p>` : '';
+  return `${back}
+    <header class="group-head">
+      <h1>${esc(g.title)}</h1>
+      <p class="gh-sub">${esc(g.year ? g.label : g.line || g.label)}</p>
+      <div class="gh-facts"><span><b>${g.books.length}</b> ${g.books.length === 1 ? 'book' : 'books'}</span>${(g.facts || []).map((f) => `<span>${esc(f)}</span>`).join('')}</div>
+      ${g.progress != null ? `<div class="progress gh-goal"><span style="width:${g.progress}%"></span></div><div class="muted small">${esc(g.goalText)}</div>` : ''}
+      ${filterNote}
+    </header>
+    <div class="group-search"><input type="search" id="group-q" placeholder="Search ${esc(g.title)}…" value="${esc(ui.groupQuery || '')}" data-input="groupQuery"></div>
+    ${gq || !ledge.length ? '' : `
+      <div class="section-label"><span>${esc(g.ledge)}</span>${ledge.length > 3 ? '<span>scroll →</span>' : ''}</div>
+      <div class="ledge-scroll"><div class="ledge">${ledge.map((b) => `<a class="ledge-book" href="#/book/${b.id}" title="${esc(b.title)}">${cover(b)}</a>`).join('')}</div></div>
+      <div class="wood" aria-hidden="true"></div>`}
+    <div class="section-label"><span>${gq ? `${shown.length} found` : `All ${g.books.length}`}</span><span>${g.year ? 'most recent first' : ''}</span></div>
+    ${shown.length ? `<div class="shelf">${shown.map(shelfBook).join('')}</div>` : '<p class="empty">Nothing here matches that.</p>'}`;
+}
+
+function viewLibrary(group) {
+  if (group) return viewLibraryGroup(group);
   const counts = { all: db.books.length, top: db.books.filter((b) => (b.rating || 0) >= 4).length };
   for (const b of db.books) counts[b.status] = (counts[b.status] || 0) + 1;
   const q = ui.libQuery.toLowerCase();
@@ -2061,6 +2113,9 @@ document.addEventListener('mousedown', () => { ui.lastSelection = String(window.
 document.addEventListener('touchstart', () => { ui.lastSelection = String(window.getSelection?.() || ''); }, { capture: true, passive: true });
 
 document.addEventListener('click', async (e) => {
+  // A Library card zooms open into its group's page.
+  const zoom = e.target.closest('a[data-zoom]');
+  if (zoom && !e.metaKey && !e.ctrlKey) { ui.zoomFrom = zoom.getBoundingClientRect(); ui.groupQuery = ''; }
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const a = el.dataset.action;
