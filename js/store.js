@@ -171,10 +171,20 @@ export function allTags() {
 }
 
 // ---------- Daily review (lightweight spaced repetition) ----------
-export function buildReviewQueue() {
+// A theme narrows the review to one tag, one book, your favourites, or your fill-in-the-blank cards.
+export function themeMatches(i, theme) {
+  if (!theme || theme.type === 'all') return true;
+  if (theme.type === 'tag') return (i.tags || []).includes(theme.value);
+  if (theme.type === 'book') return i.bookId === theme.value;
+  if (theme.type === 'fav') return !!i.favorite;
+  if (theme.type === 'cloze') return !!i.cloze?.length;
+  return true;
+}
+
+export function buildReviewQueue(theme = null) {
   const n = db.settings.dailyReview || 5;
   const t = today();
-  const pool = db.items.filter((i) => i.text && !(i.rv && i.rv.archived));
+  const pool = db.items.filter((i) => i.text && !(i.rv && i.rv.archived) && themeMatches(i, theme));
   const due = pool
     .filter((i) => !i.rv || i.rv.due <= t)
     .sort((a, b) => (b.favorite - a.favorite) || ((a.rv?.due || '').localeCompare(b.rv?.due || '')) || Math.random() - 0.5);

@@ -15,6 +15,12 @@ No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (
 - **Reading log**: record the page you're on and the minutes you read. It tracks progress and marks the book finished when you reach the last page.
 - **Reviews** for each book, with writing prompts. When you finish a book, the app asks you to write a few lines while it's fresh.
 
+**Scan a page**
+- Tap **📷 Scan a page** on a book (or in the Notebook), photograph the page, and tap the lines you want. **To here** selects everything between two lines.
+- **Saving:** **Save highlight** saves the selected lines straight to your notebook with the book and page number (the page number is filled in for you when it's printed on the page). You can then pick more lines from the same photo.
+- **Accuracy:** words broken across lines are joined back up, and you can correct the text before saving.
+- **Privacy:** the text is read on your device by the free [Tesseract](https://tesseract.projectnaptha.com) reader, bundled with the app (about 10 MB, downloaded the first time you scan, then offline). The photo isn't uploaded or kept.
+
 **Highlights & notes** (the "Notebook")
 - Save more than highlights: **quotes, notes, ideas and questions**
 - **Vocabulary:** save a word with its meaning (tap *Look up* for a free dictionary definition, English only) and the sentence you found it in. Select a word inside a saved passage and tap **+ Word** to save it with that sentence, book and page filled in. In daily review, words come back as flashcards: you see the word in its sentence and try to recall the meaning.
@@ -28,6 +34,8 @@ No account needed, no build step. It's plain HTML/CSS/JS. In **personal mode** (
 - A few saved passages come back to you each day, with light spaced repetition: *Again soon / Good / Much later / Retire*
 - Vocabulary words show as flashcards, so you see the word before its definition
 - Tracks a daily streak and shows a "passage of the day" on the home screen
+- **Themed reviews:** review just your favourites, your fill-in-the-blank cards, one tag (like #stoic) or one book, whenever you like
+- **Fill in the blank:** hide a few words of a passage to learn it by heart. To make one, select the words on the passage and tap **▁ Blank**, or type them in *Fill in the blank* when saving. In review you see the passage with a gap, can type your answer, and then see the full passage
 
 **Reading timer**
 - Tap **Start reading** on a book. A full-screen reading room shows the clock, and a small bar follows you around the app.
@@ -130,6 +138,8 @@ js/share.js           quote-card images and Markdown export
 js/yearcard.js        "my year in books" story image
 js/covers.js          cover lookup (Open Library → Google Books), saved copies, backup
 js/ai.js              Gemini calls, review tidying, caption / reel templates
+js/scan.js            scan a page: reads photos of pages on your device
+js/vendor/tesseract/  the bundled Tesseract text reader (Apache-2.0)
 js/cloud.js           optional sign-in and sync (loaded only when switched on)
 js/cloud-config.js    your Supabase project URL and anon key, if built in
 js/clubs.js           book clubs: create, invite, join, members

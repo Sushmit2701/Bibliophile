@@ -2,7 +2,7 @@ import {
   db, save, onChange, onSave, uid, today, addDays, KINDS, STATUSES, ASPECTS, suggestedRating, fmtRating,
   getBook, upsertBook, deleteBook, logSession,
   getItem, itemsForBook, upsertItem, deleteItem, allTags,
-  buildReviewQueue, reviewItem, reviewStreak, exportJSON, importJSON,
+  buildReviewQueue, themeMatches, reviewItem, reviewStreak, exportJSON, importJSON,
 } from './store.js';
 import { importKindle, importReadwise, importGoodreads } from './importers.js';
 import { quoteCard, download, bookMarkdown, allMarkdown } from './share.js';
@@ -403,6 +403,17 @@ function readingRow(b) {
     </div>`;
 }
 
+// Fill-in-the-blank: split a passage around the phrases you chose to hide.
+function clozeParts(text, phrases) {
+  const ps = (phrases || []).filter(Boolean).sort((a, b) => b.length - a.length).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!ps.length) return [{ t: text, hit: false }];
+  return String(text).split(new RegExp('(' + ps.join('|') + ')', 'gi')).map((t, k) => ({ t, hit: k % 2 === 1 }));
+}
+const clozeHTML = (text, phrases, mode) => clozeParts(text, phrases).map((p) => (!p.hit ? nl2br(p.t)
+  : mode === 'blank' ? `<span class="cloze-blank" style="--len:${Math.min(28, Math.max(4, p.t.length))}ch" aria-label="blank"></span>`
+  : `<mark class="cloze-mark">${nl2br(p.t)}</mark>`)).join('');
+const normAnswer = (s) => String(s || '').toLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+
 function itemCard(i, opts = {}) {
   const book = getBook(i.bookId);
   const kind = KINDS[i.kind] || KINDS.highlight;
@@ -412,7 +423,7 @@ function itemCard(i, opts = {}) {
   const meta = [i.page && (/^\d/.test(i.page) ? `p. ${esc(i.page)}` : esc(i.page)), i.chapter && esc(i.chapter)].filter(Boolean).join(' · ');
   const body = i.kind === 'word'
     ? `<div class="word"><strong>${esc(i.text)}</strong>${i.note && !opts.hideMeaning ? `<div class="definition">${nl2br(i.note)}</div>` : ''}${i.context ? `<blockquote class="word-context">${contextWithWord(i.context, i.text)}</blockquote>` : ''}</div>`
-    : `<blockquote class="${opts.big ? 'big' : ''}">${nl2br(i.text)}</blockquote>${i.note ? `<div class="note"><span class="note-label">My note</span>${nl2br(i.note)}</div>` : ''}`;
+    : `<blockquote class="${opts.big ? 'big' : ''}">${i.cloze?.length ? clozeHTML(i.text, i.cloze, 'mark') : nl2br(i.text)}</blockquote>${i.note ? `<div class="note"><span class="note-label">My note</span>${nl2br(i.note)}</div>` : ''}`;
   return `
     <article class="item kind-${i.kind}" data-id="${i.id}">
       <div class="item-top">
@@ -426,6 +437,7 @@ function itemCard(i, opts = {}) {
       <div class="item-actions">
         <button class="icon-btn ${i.favorite ? 'fav' : ''}" data-action="fav" data-id="${i.id}" title="Favorite">${i.favorite ? '♥' : '♡'}</button>
         <button class="icon-btn" data-action="copy" data-id="${i.id}" title="Copy">⧉</button>
+        ${i.kind !== 'word' ? `<button class="icon-btn word-btn" data-action="cloze-from" data-id="${i.id}" title="Select words in the passage, then tap to hide them in review (fill in the blank)">▁ Blank</button>` : ''}
         ${i.kind !== 'word' ? `<button class="icon-btn word-btn" data-action="word-from" data-id="${i.id}" title="Save a word from this passage (select it first)">+ Word</button><button class="icon-btn" data-action="card" data-id="${i.id}" title="Share as image">▣</button>` : ''}
         ${clubLinksOf(book).length && i.text ? (() => { const on = clubLinksOf(book).some((l) => i.sharedTo?.includes(l.cb)); return `<button class="icon-btn club-share-btn ${on ? 'on' : ''}" data-action="club-share-item" data-id="${i.id}" title="${on ? 'Shared with ' + esc(clubLinksOf(book).map((l) => l.name).join(', ')) + ' — tap to stop sharing' : 'Share with ' + esc(clubLinksOf(book).map((l) => l.name).join(', '))}">❧ ${on ? 'Shared' : 'Share'}</button>`; })() : ''}
         <button class="icon-btn" data-action="edit-item" data-id="${i.id}" title="Edit">✎</button>
@@ -607,6 +619,7 @@ function viewBook(id) {
         ${b.tags?.length ? `<div class="tags">${b.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
         <div class="row gap wrap actions">
           <button class="btn primary" data-action="add-item" data-book="${b.id}">+ Add highlight</button>
+          <button class="btn" data-action="scan" data-book="${b.id}">📷 Scan a page</button>
           <button class="btn" data-action="timer-start" data-id="${b.id}">Start reading</button>
           <button class="btn" data-action="log-session" data-id="${b.id}">Log reading</button>
           <button class="btn" data-action="edit-book" data-id="${b.id}">Edit</button>
@@ -677,7 +690,7 @@ function viewNotes() {
   return `
     <header class="page-head">
       <h1>Notebook</h1>
-      <button class="btn primary" data-action="add-item">+ New</button>
+      <div class="row gap"><button class="btn" data-action="scan">📷 Scan a page</button><button class="btn primary" data-action="add-item">+ New</button></div>
     </header>
     <div class="toolbar">
       <input type="search" class="grow" placeholder="Search every highlight, note and word…" value="${esc(ui.nQuery)}" data-input="nQuery" autofocus>
@@ -700,10 +713,41 @@ function viewNotes() {
   `;
 }
 
+// Themed reviews: everything, favourites, fill-in-the-blank cards, one tag, or one book.
+function themeName(t) {
+  if (!t || t.type === 'all') return 'Everything';
+  if (t.type === 'fav') return 'Favourites';
+  if (t.type === 'cloze') return 'Fill in the blank';
+  if (t.type === 'tag') return '#' + t.value;
+  if (t.type === 'book') return getBook(t.value)?.title || 'This book';
+  return '';
+}
+function reviewThemes() {
+  const live = db.items.filter((i) => i.text && !i.rv?.archived);
+  if (live.length < 2) return '';
+  const cur = ui.reviewTheme || { type: 'all' };
+  const count = (t) => live.filter((i) => themeMatches(i, t)).length;
+  const tagCounts = {};
+  for (const i of live) for (const t of i.tags || []) tagCounts[t] = (tagCounts[t] || 0) + 1;
+  const tags = Object.entries(tagCounts).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const books = db.books.map((b) => [b, live.filter((i) => i.bookId === b.id).length]).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]);
+  const chip = (t, label, n) => `<button class="chip ${cur.type === t.type && (cur.value || '') === (t.value || '') ? 'on' : ''}" data-action="review-theme" data-type="${t.type}" data-value="${esc(t.value || '')}">${label}${n != null ? ` <span class="count">${n}</span>` : ''}</button>`;
+  const fav = count({ type: 'fav' }), cloze = count({ type: 'cloze' });
+  return `<div class="review-themes" role="group" aria-label="What to review">
+    ${chip({ type: 'all' }, 'Everything')}
+    ${fav ? chip({ type: 'fav' }, '♥ Favourites', fav) : ''}
+    ${cloze ? chip({ type: 'cloze' }, '▁ Fill in the blank', cloze) : ''}
+    ${tags.map(([t, n]) => chip({ type: 'tag', value: t }, '#' + esc(t), n)).join('')}
+    ${books.length ? `<select class="theme-book" data-change="reviewBook" aria-label="Review one book"><option value="">One book…</option>${books.map(([b, n]) => `<option value="${b.id}" ${cur.type === 'book' && cur.value === b.id ? 'selected' : ''}>${esc(b.title)} (${n})</option>`).join('')}</select>` : ''}
+  </div>`;
+}
+
 function viewReview() {
+  const theme = ui.reviewTheme && ui.reviewTheme.type !== 'all' ? ui.reviewTheme : null;
   if (!ui.reviewQueue) {
     const doneToday = (db.reviewLog[today()] || 0) >= db.settings.dailyReview;
-    ui.reviewQueue = doneToday ? [] : buildReviewQueue(); ui.reviewIdx = 0; ui.revealed = false;
+    // A themed review is there whenever you want one; the everyday review stops when today's is done.
+    ui.reviewQueue = doneToday && !theme ? [] : buildReviewQueue(theme); ui.reviewIdx = 0; ui.revealed = false; ui.clozeGuess = '';
   }
   const queue = ui.reviewQueue;
   const streak = reviewStreak();
@@ -712,10 +756,10 @@ function viewReview() {
       <p class="empty">Save a few highlights first — they'll come back to you here, a handful a day, spaced out so you remember them.</p>`;
   }
   if (ui.reviewIdx >= queue.length) {
-    return `
+    return reviewThemes() + `
       <div class="review-done">
         <div class="ornament">❦</div>
-        <h1>That's today's review</h1>
+        <h1>${theme ? (queue.length ? `That's your ${esc(themeName(theme))} review` : `Nothing to review in ${esc(themeName(theme))} yet`) : "That's today's review"}</h1>
         <p class="muted">${streak ? `${plural(streak, 'day')} unbroken. ` : ''}More will be waiting tomorrow.</p>
         <div class="row gap center">
           <button class="btn" data-action="review-more">Review a few more</button>
@@ -726,13 +770,28 @@ function viewReview() {
   const item = getItem(queue[ui.reviewIdx]);
   if (!item) { ui.reviewIdx++; return viewReview(); }
   const isWord = item.kind === 'word';
+  const isCloze = !isWord && item.cloze?.length;
+  const single = isCloze && item.cloze.length === 1;
+  const guessRight = single && ui.clozeGuess && normAnswer(ui.clozeGuess) === normAnswer(item.cloze[0]);
   return `
     <header class="page-head">
-      <h1>Daily review</h1>
+      <h1>${theme ? esc(themeName(theme)) : 'Daily review'}</h1>
       <span class="muted">${ui.reviewIdx + 1} / ${queue.length}${streak ? ` · ${plural(streak, 'day')} streak` : ''}</span>
     </header>
     <div class="progress thin"><span style="width:${(ui.reviewIdx / queue.length) * 100}%"></span></div>
+    ${reviewThemes()}
     <div class="review-stage">
+      ${isCloze && !ui.revealed ? `
+        <article class="item review-card cloze-card">
+          <div class="item-top"><span class="kind-badge">Fill in the blank</span></div>
+          <blockquote class="big">${clozeHTML(item.text, item.cloze, 'blank')}</blockquote>
+          ${getBook(item.bookId) ? `<div class="attribution">— ${esc(getBook(item.bookId).title)}</div>` : ''}
+          <form class="cloze-form" data-form="cloze">
+            ${single ? `<input name="guess" id="cloze-guess" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type what's missing (optional)">` : '<p class="muted">Can you remember the missing words?</p>'}
+            <button class="btn">Show answer</button>
+          </form>
+        </article>` : ''}
+      ${isCloze && ui.revealed && single && ui.clozeGuess ? `<p class="cloze-verdict ${guessRight ? 'right' : 'close'}">${guessRight ? '✓ Exactly right' : `You wrote “${esc(ui.clozeGuess)}”`}</p>` : ''}
       ${isWord && !ui.revealed ? `
         <article class="item kind-word review-card">
           <div class="item-top"><span class="kind-badge">Vocabulary</span></div>
@@ -740,7 +799,7 @@ function viewReview() {
           <p class="muted">Do you remember what it means?</p>
           <button class="btn" data-action="reveal">Show meaning</button>
         </article>`
-        : `<div class="review-card">${itemCard(item, { big: true, noActions: true })}</div>`}
+        : isCloze && !ui.revealed ? '' : `<div class="review-card">${itemCard(item, { big: true, noActions: true })}</div>`}
       <div class="review-buttons">
         <button class="btn" data-action="review" data-value="again" title="Show it again in a couple of days">Again soon</button>
         <button class="btn primary" data-action="review" data-value="good" title="Spaces it out further">Good</button>
@@ -1940,6 +1999,126 @@ function bookForm(book = {}, opts = {}) {
   }, book.id ? {} : { draft: 'book', restore: opts.restore !== false });
 }
 
+// ============ SCAN A PAGE ============
+// Photograph a page, tap the lines you want, and they're saved as highlights. Read on your device.
+let Scan = null;
+const scanState = {};
+function scanModal(bookId = '') {
+  const books = db.books.slice().sort((a, b) => (b.status === 'reading') - (a.status === 'reading') || a.title.localeCompare(b.title));
+  Object.assign(scanState, { bookId: bookId || books.find((b) => b.status === 'reading')?.id || '', result: null, picked: new Set(), saved: new Set() });
+  openModal(`
+    <h2>Scan a page</h2>
+    <div class="scan">
+      <label>From book
+        <select class="scan-book">${books.map((b) => `<option value="${b.id}" ${scanState.bookId === b.id ? 'selected' : ''}>${esc(b.title)}${b.author ? ' — ' + esc(b.author) : ''}</option>`).join('')}<option value="" ${scanState.bookId ? '' : 'selected'}>— Not a book —</option></select>
+      </label>
+      <div class="scan-pick">
+        <p class="muted small">Take a photo of the page, straight on and in good light. The text is read on this device; the photo isn't uploaded or kept.</p>
+        <div class="row gap wrap">
+          <label class="btn primary">📷 Take a photo<input type="file" accept="image/*" capture="environment" data-scan-file hidden></label>
+          <label class="btn">Choose a photo<input type="file" accept="image/*" data-scan-file hidden></label>
+        </div>
+      </div>
+      <div class="scan-progress" hidden><p class="scan-status muted">Reading the page…</p><div class="progress"><span style="width:0%"></span></div></div>
+      <div class="scan-result" hidden></div>
+    </div>`, (root) => {
+    $('.scan-book', root).addEventListener('change', (e) => { scanState.bookId = e.target.value; });
+  });
+}
+
+async function runScan(file) {
+  const root = $('#modal-body');
+  $('.scan-pick', root).hidden = true;
+  $('.scan-result', root).hidden = true;
+  const prog = $('.scan-progress', root); prog.hidden = false;
+  const bar = $('span', prog), status = $('.scan-status', prog);
+  try {
+    Scan ||= await import('./scan.js');
+    const res = await Scan.readPage(file, ({ stage, p }) => {
+      status.textContent = stage === 'load' ? 'Getting the page reader ready (the first time takes a little longer)…' : 'Reading the page…';
+      bar.style.width = Math.round((stage === 'load' ? p * 0.3 : 0.3 + p * 0.7) * 100) + '%';
+    });
+    Object.assign(scanState, { result: res, picked: new Set(), saved: new Set(), page: res.page });
+    prog.hidden = true;
+    renderScanResult();
+  } catch (e) {
+    prog.hidden = true; $('.scan-pick', root).hidden = false;
+    toast(e.message || 'Couldn’t read that photo — try another');
+  }
+}
+
+function renderScanResult() {
+  const root = $('#modal-body .scan-result');
+  if (!root) return;
+  const { result: res, picked, saved } = scanState;
+  root.hidden = false;
+  if (!res.lines.length) {
+    root.innerHTML = `<p>No text found in that photo. Try again closer, straight on, and in brighter light.</p>
+      <label class="btn">📷 Try again<input type="file" accept="image/*" capture="environment" data-scan-file hidden></label>`;
+    return;
+  }
+  const chosen = res.lines.filter((_, i) => picked.has(i));
+  root.innerHTML = `
+    <p class="muted small">Tap the lines you want to keep${res.lines.length > 3 ? ', or tap the first and then use <b>To here</b> on the last' : ''}.</p>
+    <div class="scan-page" style="aspect-ratio:${1 / res.ratio}">
+      <img src="${res.image}" alt="Your photo of the page">
+      ${res.lines.map((l, i) => `<button type="button" class="scan-line ${picked.has(i) ? 'on' : ''} ${saved.has(i) ? 'saved' : ''}" data-line="${i}" style="left:${(l.x * 100).toFixed(2)}%;top:${(l.y * 100).toFixed(2)}%;width:${(l.w * 100).toFixed(2)}%;height:${(l.h * 100).toFixed(2)}%" title="${esc(l.text)}"></button>`).join('')}
+    </div>
+    <div class="row gap wrap scan-tools">
+      <button type="button" class="btn sm" data-scan="all">Select all</button>
+      <button type="button" class="btn sm" data-scan="range" ${picked.size ? '' : 'disabled'}>To here…</button>
+      <button type="button" class="btn sm ghost" data-scan="clear" ${picked.size ? '' : 'disabled'}>Clear</button>
+    </div>
+    <label>Passage <span class="muted small">check it against the page; you can correct anything</span>
+      <textarea class="scan-text" rows="4" placeholder="Tap lines on the photo above">${esc(chosen.length ? Scan.joinLines(chosen) : '')}</textarea>
+    </label>
+    <div class="row gap">
+      <label class="grow">Page <input class="scan-page-no" value="${esc(scanState.page || '')}" inputmode="numeric"></label>
+      <label class="grow">Save as <select class="scan-kind">${['highlight', 'quote', 'idea'].map((k) => `<option value="${k}">${KINDS[k].label}</option>`).join('')}</select></label>
+    </div>
+    <div class="row gap wrap end">
+      <label class="btn ghost">New photo<input type="file" accept="image/*" capture="environment" data-scan-file hidden></label>
+      <button type="button" class="btn" data-scan="edit" ${picked.size ? '' : 'disabled'}>Add a note first…</button>
+      <button type="button" class="btn primary" data-scan="save" ${picked.size ? '' : 'disabled'}>Save highlight</button>
+    </div>
+    ${saved.size ? `<p class="muted small">Saved ${plural(saved.size, 'line')} from this page. Pick more lines, or close when you're done.</p>` : ''}`;
+}
+
+document.addEventListener('click', (e) => {
+  const line = e.target.closest('.scan-line');
+  const tool = e.target.closest('[data-scan]');
+  if (!line && !tool) return;
+  const st = scanState;
+  if (line) {
+    const i = Number(line.dataset.line);
+    if (st.rangeFrom != null) { // "To here": select everything between the two taps
+      const [a, b] = [Math.min(st.rangeFrom, i), Math.max(st.rangeFrom, i)];
+      for (let k = a; k <= b; k++) st.picked.add(k);
+      st.rangeFrom = null;
+    } else if (st.picked.has(i)) st.picked.delete(i); else st.picked.add(i);
+    st.lastTapped = i;
+  } else {
+    const t = tool.dataset.scan;
+    const text = ($('#modal-body .scan-text')?.value || '').trim();
+    const page = ($('#modal-body .scan-page-no')?.value || '').trim();
+    const kind = $('#modal-body .scan-kind')?.value || 'highlight';
+    if (t === 'all') st.result.lines.forEach((_, i) => st.picked.add(i));
+    else if (t === 'clear') st.picked.clear();
+    else if (t === 'range') { st.rangeFrom = st.lastTapped ?? Math.min(...st.picked); toast('Now tap the last line you want'); return; }
+    else if (t === 'save') {
+      if (!text) return;
+      upsertItem({ kind, text, bookId: st.bookId, source: st.bookId ? '' : 'Scanned page', page, tags: [] });
+      st.picked.forEach((i) => st.saved.add(i)); st.picked.clear(); st.page = page;
+      toast('Saved to your notebook');
+    } else if (t === 'edit') {
+      if (!text) return;
+      itemForm({ kind, text, bookId: st.bookId, page }, st.bookId);
+      return;
+    }
+  }
+  renderScanResult();
+});
+
 function itemForm(item = {}, presetBook = '', opts = {}) {
   const isNew = !item.id;
   const bookId = item.bookId ?? presetBook;
@@ -1960,8 +2139,12 @@ function itemForm(item = {}, presetBook = '', opts = {}) {
           <textarea name="text" rows="5" ${isWord ? '' : 'required autofocus'} placeholder="Type, paste or dictate the passage…">${esc(isWord ? '' : item.text || '')}</textarea>
         </label>
         ${SpeechRec ? `<div class="voice-row">${micButton('[name=text]', 'Read a passage aloud', 'passage')}${micButton('[name=note]', 'Dictate note', 'note')}<span class="interim muted"></span></div>` : ''}
+        ${isNew ? '<button type="button" class="link-btn small scan-link" data-action="scan-from-form">📷 Scan it from a photo of the page</button>' : ''}
         <label>My note (optional)
           <textarea name="note" rows="2" placeholder="Why it mattered, what it reminds you of…">${esc(isWord ? '' : item.note || '')}</textarea>
+        </label>
+        <label>Fill in the blank <span class="muted small">optional · words from the passage to hide in review; separate several with ;</span>
+          <input name="cloze" value="${esc((item.cloze || []).join('; '))}" placeholder="e.g. a narrow mind" autocomplete="off">
         </label>
       </div>
 
@@ -2408,6 +2591,23 @@ document.addEventListener('click', async (e) => {
       if (confirm('Remove your AI key from this device?')) { db.settings.geminiKey = ''; save(); toast('Key removed'); }
       break;
     case 'lookup-word': lookupWord(el); break;
+    case 'scan': scanModal(el.dataset.book || (location.hash.startsWith('#/book/') ? location.hash.split('/')[2] : '')); break;
+    case 'scan-from-form': scanModal($('#modal-body [name=bookId]')?.value || ''); break;
+    case 'cloze-from': {
+      const src = getItem(id);
+      const picked = (ui.lastSelection || '').replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+      const flat = src.text.replace(/\s+/g, ' ');
+      if (!picked || !flat.toLowerCase().includes(picked.toLowerCase())) {
+        toast(src.cloze?.length ? 'Select more words to hide, or edit the passage to change them' : 'Select the words to hide first, then tap ▁ Blank');
+        break;
+      }
+      const has = (src.cloze || []).find((c) => c.toLowerCase() === picked.toLowerCase());
+      src.cloze = has ? src.cloze.filter((c) => c !== has) : [...(src.cloze || []), picked];
+      src.updatedAt = new Date().toISOString();
+      save();
+      toast(has ? 'No longer hidden' : `“${picked}” will be hidden in review`);
+      break;
+    }
     case 'word-from': {
       const src = getItem(id);
       const picked = (ui.lastSelection || '').trim();
@@ -2456,13 +2656,18 @@ document.addEventListener('click', async (e) => {
     case 'sp-disconnect': if (confirm('Disconnect Spotify from this browser?')) { Spotify.disconnect(); render(); toast('Spotify disconnected'); } break;
     case 'shuffle-daily': ui.dailyOffset += 1 + Math.floor(Math.random() * 7); render(); break;
     case 'reveal': ui.revealed = true; render(); break;
+    case 'review-theme':
+      ui.reviewTheme = { type: el.dataset.type, value: el.dataset.value || '' };
+      ui.reviewQueue = null; render();
+      break;
     case 'review':
       reviewItem(ui.reviewQueue[ui.reviewIdx], el.dataset.value);
-      ui.reviewIdx++; ui.revealed = false; render();
+      ui.reviewIdx++; ui.revealed = false; ui.clozeGuess = ''; render();
       break;
     case 'review-more': {
       const seen = new Set(ui.reviewQueue);
-      const more = db.items.filter((i) => !seen.has(i.id) && !i.rv?.archived).sort(() => Math.random() - 0.5).slice(0, 5).map((i) => i.id);
+      const th = ui.reviewTheme && ui.reviewTheme.type !== 'all' ? ui.reviewTheme : null;
+      const more = db.items.filter((i) => !seen.has(i.id) && !i.rv?.archived && i.text && themeMatches(i, th)).sort(() => Math.random() - 0.5).slice(0, 5).map((i) => i.id);
       if (!more.length) { toast("You've seen everything for now"); break; }
       ui.reviewQueue.push(...more); render();
       break;
@@ -2472,6 +2677,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', async (e) => {
   const el = e.target;
+  if (el.dataset.scanFile !== undefined && el.files?.[0]) { runScan(el.files[0]); el.value = ''; return; }
   if (el.dataset.coverUpload) {
     const f = el.files?.[0];
     if (f) useUploadedCover(getBook(el.dataset.coverUpload), f).then(() => { closeModal(); toast('Cover saved'); }).catch(() => toast('Couldn’t read that image'));
@@ -2480,6 +2686,7 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.change) {
     ui[el.dataset.change] = el.value;
     if (el.dataset.change === 'libSort') { db.settings.libSort = el.value; save({ quiet: true }); } // remember how you like the library arranged
+    if (el.dataset.change === 'reviewBook') { ui.reviewTheme = el.value ? { type: 'book', value: el.value } : { type: 'all' }; ui.reviewQueue = null; }
     render(); return;
   }
   if (el.matches('[data-timer-pick]') && el.value) { db.timer = { bookId: el.value, startedAt: Date.now(), elapsed: 0 }; if (focusCfg().on) db.timer.focus = newFocus(); save(); return; }
@@ -2563,13 +2770,18 @@ document.addEventListener('submit', (e) => {
       bookId: fd.bookId, source: fd.bookId ? '' : fd.source.trim(),
       page: fd.page.trim(), chapter: fd.chapter.trim(), tags: parseTags(fd.tags), favorite: !!fd.favorite,
     };
+    if (!isWord) {
+      const wanted = String(fd.cloze || '').split(';').map((x) => x.trim()).filter(Boolean);
+      data.cloze = wanted.filter((x) => data.text.toLowerCase().includes(x.toLowerCase()));
+      if (data.cloze.length < wanted.length) ui.clozeNote = 'Saved. Some words to hide aren’t in the passage, so they were left out';
+    }
     if (fd.id) data.id = fd.id;
     const links = clubLinksOf(getBook(fd.bookId));
     if (links.length) data.sharedTo = fd.shareClub ? links.map((l) => l.cb) : [];
     else if (fd.id && getItem(fd.id)?.sharedTo?.length) data.sharedTo = []; // moved to another book
     upsertItem(data);
     clearDraft('item');
-    toast('Saved');
+    toast(ui.clozeNote || 'Saved'); ui.clozeNote = '';
     if (e.submitter?.name === 'again') {
       itemForm({ kind: data.kind, bookId: data.bookId, source: data.source, chapter: data.chapter, tags: data.tags }, data.bookId);
     } else closeModal();
@@ -2586,6 +2798,8 @@ document.addEventListener('submit', (e) => {
     save(); applyTheme(); toast('Settings saved');
   } else if (type === 'cover-url') {
     saveChosenCover(getBook(fd.id), (fd.url || '').trim());
+  } else if (type === 'cloze') {
+    ui.clozeGuess = (fd.guess || '').trim(); ui.revealed = true; render();
   } else if (type === 'club-book') {
     const local = fd.local ? getBook(fd.local) : null;
     const b = local ? { title: local.title, author: local.author, cover: local.cover, pages: local.pages, isbn: local.isbn } : { title: (fd.title || '').trim(), author: (fd.author || '').trim(), pages: Number(fd.pages) || 0 };
